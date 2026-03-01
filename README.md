@@ -89,7 +89,7 @@ Sa Render free (walang card), gamitin mo siya as **Web Service**:
 
 ### Commands
 
-- `j!status` – quick reminder na `j!view` na ang main command para sa profile/status.
+- `j!status <note>` – admins only: set ng custom "bubble status" text mo sa server na 'to, lalabas sa `j!view`.
 - `j!join` – papasok si JanJan sa voice channel mo kung saan ka naka-VC ngayon, para sama-sama sa call (kailangan may Connect/Speak perms si bot).
 - `j!view @User` – embed/profile view ng member: malaking avatar picture + status + baklang chika.
 - `j!help` – listahan ng commands at paano ka makipag-chikahan kay JanJan.

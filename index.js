@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
 const dotenv = require('dotenv');
 const axios = require('axios');
@@ -34,6 +34,9 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
+
+// In-memory custom "bubble status" per user per guild (resets when bot restarts).
+const userCustomStatus = new Map();
 
 async function callGroqChat(userMessage) {
   const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -101,7 +104,31 @@ client.on('messageCreate', async (message) => {
       const command = (args.shift() || '').toLowerCase();
 
       if (command === 'status') {
-        await message.reply('Ghorl, gamitin mo na lang `j!view @User` — dun ko ibibigay yung full chika with picture at status.');
+        if (!message.guild) {
+          await message.reply('Ghorl, yung status na yan pang-server lang, hindi pang-DM. Gawin mo sa loob ng server.');
+          return;
+        }
+
+        const member = message.member;
+        if (
+          !member ||
+          !member.permissions ||
+          !member.permissions.has(PermissionsBitField.Flags.Administrator)
+        ) {
+          await message.reply('Only admin ang pwedeng mag-set ng bubble status dito, ghorl. Pa-approve ka muna sa mga diyosa ng server.');
+          return;
+        }
+
+        const note = args.join(' ').trim();
+        if (!note) {
+          await message.reply('Lagyan mo ng laman yung status mo, mare. Halimbawa: `j!status CEO ng chismis`.');
+          return;
+        }
+
+        const key = `${message.guild.id}:${member.id}`;
+        userCustomStatus.set(key, note);
+
+        await message.reply(`Sige, from now on dito sa server na \'to, ang bubble status mo ay: **${note}**. Isa ka nang opisyal na karakter, ghorl.`);
         return;
       }
 
@@ -171,6 +198,14 @@ client.on('messageCreate', async (message) => {
           'Sa itsura pa lang sa picture, halatang may energy na hindi basta-basta—pero ikaw na bahala kung good girl, bad bitch, o lowkey tita ng barangay.',
         ];
 
+        if (message.guild) {
+          const key = `${message.guild.id}:${user.id}`;
+          if (userCustomStatus.has(key)) {
+            const note = userCustomStatus.get(key);
+            descriptionLines.push(`Bubble status niya dito: *${note}*.`);
+          }
+        }
+
         const embed = new EmbedBuilder()
           .setTitle(`Chika profile ni ${displayName}`)
           .setDescription(descriptionLines.join('\n'))
@@ -187,7 +222,7 @@ client.on('messageCreate', async (message) => {
       if (command === 'help') {
         const replyText =
           'Ghorl, eto ang menu ni JanJan:\n' +
-          '- `j!status` — pa-remind lang na `j!view` na ang gamit ngayon.\n' +
+          '- `j!status <note>` — admins only: set mo yung bubble status mo sa server na \'to.\n' +
           '- `j!join` — paliwanag kung paano ako maging 24/7 (kailangan pa rin ng hosting at tamang invite).\n' +
           '- `j!view @User` — full chika profile: picture + status + konting judgement na may pagmamahal.\n' +
           'Plus, kapag minention mo ako o nireplyan mo ako, automatic chikahan mode na tayo.';
