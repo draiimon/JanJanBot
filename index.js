@@ -1,4 +1,5 @@
 const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
 const dotenv = require('dotenv');
 const axios = require('axios');
 const http = require('http');
@@ -105,10 +106,37 @@ client.on('messageCreate', async (message) => {
       }
 
       if (command === 'join') {
-        const replyText =
-          'Mare, hindi ako basta sumasali mag-isa. Kailangan mo akong i-invite gamit yung Discord Developer Portal invite link ng bot. ' +
-          'Pag nasa server na ako at may host na hindi natutulog, doon tayo magiging 24/7 sa discord. Bad bitch pero may proseso pa rin.';
-        await message.reply(replyText);
+        if (!message.guild) {
+          await message.reply('Ghorl, wala tayong server dito. Kailangan sa loob tayo ng server na may voice channel.');
+          return;
+        }
+
+        const member = message.member;
+        const voiceChannel = member && member.voice && member.voice.channel ? member.voice.channel : null;
+
+        if (!voiceChannel) {
+          await message.reply('Sumali ka muna sa voice channel, mare. Doon kita sasamahan para sa tawag na to.');
+          return;
+        }
+
+        const existing = getVoiceConnection(message.guild.id);
+        if (existing) {
+          if (existing.joinConfig.channelId === voiceChannel.id) {
+            await message.reply('Nasa call na kita ghorl, wag ka nang demanding diyan.');
+          } else {
+            await message.reply('Nasa ibang voice channel na ako ngayon. Putulin mo muna yun bago mo ako ilipat, char.');
+          }
+          return;
+        }
+
+        joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: voiceChannel.guild.id,
+          adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+          selfDeaf: false
+        });
+
+        await message.reply(`O ayan, pumasok na akong tawag sa **${voiceChannel.name}**. Isa na namang bading sa call, kompleto na ang gulo.`);
         return;
       }
 
