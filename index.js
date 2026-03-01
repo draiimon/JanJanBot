@@ -33,10 +33,95 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
+  startScheduledGreetings();
 });
 
 // In-memory custom "bubble status" per user per guild (resets when bot restarts).
 const userCustomStatus = new Map();
+
+// Fixed channel for automatic greetings
+const GREET_CHANNEL_ID = '1477702703655424254';
+
+// Track last greeting per day so we don't spam
+const lastGreetings = {
+  morning: null,
+  night: null
+};
+
+function getNowInPhilippines() {
+  const now = new Date();
+  try {
+    const phString = now.toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+    return new Date(phString);
+  } catch {
+    return now;
+  }
+}
+
+async function collectActiveMembersForChannel(channel) {
+  if (!channel || !channel.guild) return [];
+  const guild = channel.guild;
+  try {
+    await guild.members.fetch();
+  } catch (e) {
+    console.error('Failed to fetch guild members for greetings:', e);
+  }
+
+  const active = guild.members.cache.filter((m) => {
+    if (m.user.bot) return false;
+    const status = m.presence && m.presence.status;
+    return status === 'online' || status === 'idle' || status === 'dnd';
+  });
+
+  return Array.from(active.values());
+}
+
+async function sendScheduledGreeting(type) {
+  try {
+    const channel = await client.channels.fetch(GREET_CHANNEL_ID).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+
+    const members = await collectActiveMembersForChannel(channel);
+    const mentions =
+      members.length > 0 ? members.map((m) => `<@${m.id}>`).join(' ') : 'Walang naka-online na ghorl ngayon.';
+
+    let text;
+    if (type === 'morning') {
+      text =
+        'Gising na mga baklang ulikba! Oras na para magtrabaho at magparamdam sa GC, ' +
+        'huwag puro tulog at scroll sa FYP. Laban na, mga letche kayong mahal ko.';
+    } else {
+      text =
+        'Pack up na mga bakla, tulog mode na. Magpahinga kayo, same energy ulit bukas sa chismis at hanash. ' +
+        'Sino mang hindi natulog, bahala sa eye bags n\'yo bukas, char.';
+    }
+
+    await channel.send({
+      content: `${mentions}\n${text}`
+    });
+  } catch (e) {
+    console.error('Failed to send scheduled greeting:', e);
+  }
+}
+
+function startScheduledGreetings() {
+  setInterval(async () => {
+    const now = getNowInPhilippines();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const todayKey = now.toISOString().slice(0, 10);
+
+    if (hour === 8 && minute === 0 && lastGreetings.morning !== todayKey) {
+      await sendScheduledGreeting('morning');
+      lastGreetings.morning = todayKey;
+    }
+
+    if (hour === 22 && minute === 0 && lastGreetings.night !== todayKey) {
+      await sendScheduledGreeting('night');
+      lastGreetings.night = todayKey;
+    }
+  }, 60 * 1000);
+}
 
 async function callGroqChat(userMessage) {
   const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -128,7 +213,19 @@ client.on('messageCreate', async (message) => {
         const key = `${message.guild.id}:${member.id}`;
         userCustomStatus.set(key, note);
 
-        await message.reply(`Sige, from now on dito sa server na \'to, ang bubble status mo ay: **${note}**. Isa ka nang opisyal na karakter, ghorl.`);
+        try {
+          await me.setPresence({
+            activities: [{ name: note }],
+            status: 'online'
+          });
+        } catch (e) {
+          console.error('Failed to update bot presence:', e);
+        }
+
+        await message.reply(
+          `Sige, from now on dito sa server na 'to, ang bubble status mo ay: **${note}**. ` +
+            'At ginawa ko na rin yang peg ng status ko, para matchy-matchy tayong dalawa.'
+        );
         return;
       }
 
@@ -216,6 +313,40 @@ client.on('messageCreate', async (message) => {
         }
 
         await message.reply({ embeds: [embed] });
+        return;
+      }
+
+      if (command === 'test') {
+        const now = getNowInPhilippines();
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+
+        const channel = message.channel;
+        const members = message.guild ? await collectActiveMembersForChannel(channel) : [];
+        const mentions =
+          members.length > 0 ? members.map((m) => `<@${m.id}>`).join(' ') : 'Wala pang naka-online na dapat i-greet.';
+
+        let timeBand = 'gabi';
+        if (hour >= 5 && hour < 12) timeBand = 'umaga';
+        else if (hour >= 12 && hour < 18) timeBand = 'hapon';
+
+        const phTimeString = `${hour.toString().padStart(2, '0')}:${minute
+          .toString()
+          .padStart(2, '0')} (oras sa Pilipinas)`;
+
+        const aiPrompt =
+          `Gumawa ka ng maikling greeting para sa mga nasa VC/GC ngayon. ` +
+          `Oras ngayon: ${phTimeString}, so technically ${timeBand}. ` +
+          `Hindi mo na kailangang ilista yung mentions, ako na mag-a-append nun sa message. ` +
+          `Tagalog baklang Pinoy na bad bitch ang tono, pero wholesome pa rin at hindi bastos o NSFW. ` +
+          `Isang maikli hanggang medium na paragraph lang, parang pambungad sa araw/gabi nila.`;
+
+        await message.channel.sendTyping();
+        const aiText = await callGroqChat(aiPrompt);
+
+        await message.reply({
+          content: `${mentions}\n${aiText}`
+        });
         return;
       }
 

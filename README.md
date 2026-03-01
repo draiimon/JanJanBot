@@ -89,9 +89,10 @@ Sa Render free (walang card), gamitin mo siya as **Web Service**:
 
 ### Commands
 
-- `j!status <note>` – admins only: set ng custom "bubble status" text mo sa server na 'to, lalabas sa `j!view`.
+- `j!status <note>` – admins only: set ng custom "bubble status" text mo sa server na 'to, lalabas sa `j!view` at gagamitin din bilang activity ng bot.
 - `j!join` – papasok si JanJan sa voice channel mo kung saan ka naka-VC ngayon, para sama-sama sa call (kailangan may Connect/Speak perms si bot).
 - `j!view @User` – embed/profile view ng member: malaking avatar picture + status + baklang chika.
+- `j!test` – manual test ng greeting: gagamitin ang AI persona ni JanJan para bumati sa mga online/idle/dnd depende sa oras ngayon.
 - `j!help` – listahan ng commands at paano ka makipag-chikahan kay JanJan.
 
 Enjoy the chikahan with your AI beki bot! 💅
