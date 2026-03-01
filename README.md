@@ -89,9 +89,9 @@ Sa Render free (walang card), gamitin mo siya as **Web Service**:
 
 ### Commands
 
-- `j!status` – quick check kung buhay si JanJan sa server (pang self-status ng bot).
+- `j!status` – quick reminder na `j!view` na ang main command para sa profile/status.
 - `j!join` – paliwanag kung paano siya maging 24/7 (kailangan mo pa rin ng hosting at proper invite).
-- `j!view @User` – tingnan ang basic status ng isang member (online/idle/dnd/offline) kung allowed sa intents.
+- `j!view @User` – embed/profile view ng member: malaking avatar picture + status + baklang chika.
 - `j!help` – listahan ng commands at paano ka makipag-chikahan kay JanJan.
 
 Enjoy the chikahan with your AI beki bot! 💅

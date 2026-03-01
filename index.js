@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
 const dotenv = require('dotenv');
 const axios = require('axios');
 const http = require('http');
@@ -100,12 +100,7 @@ client.on('messageCreate', async (message) => {
       const command = (args.shift() || '').toLowerCase();
 
       if (command === 'status') {
-        const guildName = message.guild ? message.guild.name : 'DM';
-        const replyText =
-          `O ayan ghorl, gising ako at on duty. ` +
-          `Naka-log in ako as ${me.tag} at nakakabit dito sa "${guildName}". ` +
-          `Basta naka-on yung host ko, 24/7 akong ready sa chismis.`;
-        await message.reply(replyText);
+        await message.reply('Ghorl, gamitin mo na lang `j!view @User` — dun ko ibibigay yung full chika with picture at status.');
         return;
       }
 
@@ -137,21 +132,36 @@ client.on('messageCreate', async (message) => {
         else if (status === 'dnd') prettyStatus = 'do not disturb, wag muna guluhin ghorl';
 
         const displayName = targetMember.displayName || targetMember.user.username;
-        const replyText =
-          `Chika report para kay ${displayName}: ` +
-          `status niya ngayon ay "${prettyStatus}". ` +
-          'Kung hindi nagre-refresh, ibig sabihin hindi ko nakikita full presence niya sa settings.';
+        const user = targetMember.user || targetMember;
+        const avatarUrl = user.displayAvatarURL
+          ? user.displayAvatarURL({ size: 512 })
+          : null;
 
-        await message.reply(replyText);
+        const descriptionLines = [
+          `Eto na si ${displayName}, isa sa mga certified characters ng server na 'to.`,
+          `Status ngayon: **${prettyStatus}**.`,
+          'Sa itsura pa lang sa picture, halatang may energy na hindi basta-basta—pero ikaw na bahala kung good girl, bad bitch, o lowkey tita ng barangay.',
+        ];
+
+        const embed = new EmbedBuilder()
+          .setTitle(`Chika profile ni ${displayName}`)
+          .setDescription(descriptionLines.join('\n'))
+          .setColor(0xff66cc);
+
+        if (avatarUrl) {
+          embed.setImage(avatarUrl);
+        }
+
+        await message.reply({ embeds: [embed] });
         return;
       }
 
       if (command === 'help') {
         const replyText =
           'Ghorl, eto ang menu ni JanJan:\n' +
-          '- `j!status` — check kung buhay at nakakabit ako sa server.\n' +
+          '- `j!status` — pa-remind lang na `j!view` na ang gamit ngayon.\n' +
           '- `j!join` — paliwanag kung paano ako maging 24/7 (kailangan pa rin ng hosting at tamang invite).\n' +
-          '- `j!view @User` — chika report sa status ng isang member (online/idle/dnd/offline kung kita ko).\n' +
+          '- `j!view @User` — full chika profile: picture + status + konting judgement na may pagmamahal.\n' +
           'Plus, kapag minention mo ako o nireplyan mo ako, automatic chikahan mode na tayo.';
         await message.reply(replyText);
         return;
