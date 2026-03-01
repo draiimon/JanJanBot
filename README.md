@@ -71,6 +71,10 @@ Most cloud hosts (Render, Railway, etc.) support Docker. Basic idea:
 ## 5. How to use
 
 - Invite the bot to your server with proper message content intent enabled.
+- In the **Bot** settings in Discord Developer Portal, it is recommended to enable:
+  - MESSAGE CONTENT INTENT
+  - SERVER MEMBERS INTENT
+  - PRESENCE INTENT
 - The bot will answer when:
   - You **mention** it in a message (e.g. `@JanJan kamusta ka na teh?`)
   - You **reply** to one of its messages.
@@ -78,6 +82,13 @@ Most cloud hosts (Render, Railway, etc.) support Docker. Basic idea:
   - Tagalog
   - Beki-style (pang-bading)
   - Friendly and wholesome (no NSFW/offensive content)
+
+### Commands
+
+- `j!status` – quick check kung buhay si JanJan sa server (pang self-status ng bot).
+- `j!join` – paliwanag kung paano siya maging 24/7 (kailangan mo pa rin ng hosting at proper invite).
+- `j!view @User` – tingnan ang basic status ng isang member (online/idle/dnd/offline) kung allowed sa intents.
+- `j!help` – listahan ng commands at paano ka makipag-chikahan kay JanJan.
 
 Enjoy the chikahan with your AI beki bot! 💅
 
