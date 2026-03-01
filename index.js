@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const dotenv = require('dotenv');
 const axios = require('axios');
+const http = require('http');
 
 dotenv.config();
 
@@ -200,5 +201,16 @@ client.on('messageCreate', async (message) => {
 client.login(DISCORD_TOKEN).catch((err) => {
   console.error('Failed to login to Discord:', err);
   process.exit(1);
+});
+
+// Minimal HTTP server so Render Web Service sees a healthy app.
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('JanJan Discord bot is running.\n');
+});
+
+server.listen(PORT, () => {
+  console.log(`HTTP status server listening on port ${PORT}`);
 });
 

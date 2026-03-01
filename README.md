@@ -46,27 +46,31 @@ If everything is correct, you should see something like:
 Logged in as YourBotName#1234
 ```
 
-## 4. Running from cloud (Docker)
+## 4. Running from cloud (Render Web Service, free)
 
-Most cloud hosts (Render, Railway, etc.) support Docker. Basic idea:
+Sa Render free (walang card), gamitin mo siya as **Web Service**:
 
-1. Build the image locally (optional, pang-test lang):
+1. Sa Render, click **New → Web Service** at piliin ang `JanJanBot` repo mo.
+2. Branch: `main`
+3. **Build Command**:
 
    ```bash
-   cd "c:/Users/Aloof/Desktop/Andrei/JanJan"
-   docker build -t janjan-discord-bot .
+   npm install
    ```
 
-2. Sa napili mong cloud provider:
+4. **Start Command**:
 
-   - I-connect ang repo/folder na ito, o i-push ang Docker image kung yun ang flow.
-   - Gamitin ang `Dockerfile` sa root nito bilang build file.
-   - I-set ang environment variables sa dashboard ng provider (huwag sa `.env`):
-     - `DISCORD_TOKEN`
-     - `GROQ_API_KEY`
-   - Walang kailangan na HTTP port; background process lang siya na tumatakbo.
+   ```bash
+   npm start
+   ```
 
-3. I-deploy; pag running na, dapat makita mong online na ang bot sa Discord.
+5. Sa Environment variables sa Render dashboard, idagdag:
+   - `DISCORD_TOKEN`
+   - `GROQ_API_KEY`
+
+6. Hayaan mong Render mag-assign ng `PORT`. May maliit na HTTP server si JanJan sa `index.js` na nakikinig sa `process.env.PORT`, kaya magiging healthy yung Web Service habang tumatakbo rin ang Discord bot.
+
+7. Pag “Live” na yung service, dapat online na rin ang bot sa Discord 24/7 (hangga’t hindi naka-sleep yung free instance).
 
 ## 5. How to use
 
