@@ -74,8 +74,8 @@ const sodium = require('libsodium-wrappers');
   const https = require('https');
   const fs = require('fs');
   const path = require('path');
-  const EdgeTTSLib = require('edge-tts-universal');
-  const MsEdgeTTS = EdgeTTSLib.UniversalEdgeTTS || EdgeTTSLib.MsEdgeTTS || EdgeTTSLib;
+  const { UniversalEdgeTTS } = require('edge-tts-universal');
+  const MsEdgeTTS = UniversalEdgeTTS;
 
   // FFmpeg for audio on Render
   process.env.FFMPEG_PATH = require('ffmpeg-static');
@@ -227,14 +227,8 @@ const sodium = require('libsodium-wrappers');
 
     // === METHOD 1: Edge TTS (male voice, same as gnslgbot) ===
     try {
-      console.log('[TTS] Trying Universal Edge TTS (fil-PH-AngeloNeural)... Type:', typeof MsEdgeTTS);
-      let tts;
-      try {
-        tts = new MsEdgeTTS();
-      } catch (e) {
-        console.warn('[TTS] Failed to instantiate MsEdgeTTS, trying .MsEdgeTTS constructor...', e.message);
-        tts = new MsEdgeTTS.MsEdgeTTS();
-      }
+      console.log(`[TTS] Requesting Universal Edge TTS (Angelo) for text: "${text.substring(0, 30)}..."`);
+      const tts = new MsEdgeTTS();
 
       const voice = 'fil-PH-AngeloNeural';
       const filePath = path.join(tmpDir, `tts_edge_${guildId}_${Date.now()}.mp3`);
