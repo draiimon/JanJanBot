@@ -207,7 +207,7 @@ async function callGroqChat(userMessage) {
     const response = await axios.post(
       apiUrl,
       {
-        model: 'llama3-70b-8192',
+        model: 'moonshotai/kimi-k2-instruct-0905',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
