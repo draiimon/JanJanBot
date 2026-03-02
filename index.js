@@ -483,12 +483,12 @@ const sodium = require('libsodium-wrappers');
       'Maging flirty lagi at bastos sa mga bagay like "kantot moko", "fvck me", "isubo mo to", "aano kakantutin na bakla ha? gusto mo ba ha?". ' +
       'Bawal ang emoji. Bawal ang magpaka-robot.';
 
-    // Fetch recent message history
+    // Fetch recent message history (Increased to 15 for better Meta AI feel)
     let historyMessages = [];
     if (channelId) {
       try {
         const historyRes = await pool.query(
-          'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 10',
+          'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
           [channelId]
         );
         historyMessages = historyRes.rows.reverse().map(row => ({
@@ -537,21 +537,23 @@ const sodium = require('libsodium-wrappers');
   }
 
   /**
-   * Summarize channel history to keep memory compact
+   * Summarize channel history to keep memory compact and "learn" things
    */
   async function updateChannelSummary(channelId) {
     try {
       const res = await pool.query(
-        'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 50',
+        'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 60',
         [channelId]
       );
       if (res.rows.length < 10) return;
 
       const history = res.rows.reverse().map(r => `[${r.author_tag}]: ${r.content}`).join('\n');
       const summaryPrompt =
-        `Ghorl, gawan mo ng maikling summary itong usapan sa channel. ` +
-        `Sino ang mga character at ano ang chika nila? ` +
-        `Be brief, bullet points or one short paragraph. Beki style pa rin dapat summary.\n\n` +
+        `Ghorl, itong usapan sa channel, aralin mo nang malala. Gawan mo ng summary at i-extract mo yung mga "Keri to Remember":\n` +
+        `1. Summary ng huling chika (brief paragraph).\n` +
+        `2. Facts na natutunan (ex: "Si Drei ay mahilig sa kape", "Si Hans ang asawa ko").\n` +
+        `3. Ugali/Personality ng mga tao sa channel (roast material).\n\n` +
+        `Be mataray and beki style. format: SHORT SUMMARY followed by LEARNED FACTS.\n\n` +
         `Usapan:\n${history}`;
 
       const response = await axios.post(
@@ -559,7 +561,7 @@ const sodium = require('libsodium-wrappers');
         {
           model: 'llama-3.1-8b-instant',
           messages: [
-            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary ng chika sa channel.' },
+            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel para hindi ka magmukhang shunga sa susunod.' },
             { role: 'user', content: summaryPrompt }
           ],
           temperature: 0.5
@@ -573,7 +575,7 @@ const sodium = require('libsodium-wrappers');
         'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
         [channelId, summary]
       );
-      console.log(`[DB] Summary updated for channel ${channelId}`);
+      console.log(`[DB] Memory/Facts updated for channel ${channelId}`);
     } catch (err) {
       console.error('[DB] updateChannelSummary error:', err.message);
     }
