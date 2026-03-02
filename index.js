@@ -570,9 +570,9 @@ const sodium = require('libsodium-wrappers');
 
     // JanJan's Tiered Intelligence Matrix (Priority Model Fallback)
     const models = [
-      'llama-3.3-70b-versatile',            // === [PINAKA MAIN / FLAGSHIP MODEL] ===
+      'qwen/qwen3-32b',                     // === [PINAKA MAIN / FLAGSHIP MODEL] ===
+      'llama-3.3-70b-versatile',            // Powerhouse Secondary
       'meta-llama/llama-4-scout-17b-16e-i', // Elite Preview
-      'qwen/qwen3-32b',                     // Creative / Witty
       'moonshotai/kimi-k2-instruct-0905',   // Multi-lingual Specialist
       'groq/compound',                      // Stable Powerhouse
       'groq/compound-mini',                 // Efficient Alternative
