@@ -1298,6 +1298,69 @@ const {
           await message.reply('🛑 **TUMIGIL NA AKO!** Naupong na ang tenga ko, mare.');
           return;
         }
+        // j!view @user — View user's main profile + server profile
+        if (command === 'view' || command === 'profile') {
+          if (!message.guild) return;
+
+          const target = message.mentions.users.first() || (args[0] ? await client.users.fetch(args[0]).catch(() => null) : message.author);
+          if (!target) { await message.reply('Sino ba yun? Mention o ID mo, ghorl.'); return; }
+
+          // Force fetch for banner
+          const fullUser = await client.users.fetch(target.id, { force: true });
+          const member = await message.guild.members.fetch(target.id).catch(() => null);
+
+          const mainAvatar = fullUser.displayAvatarURL({ size: 1024, dynamic: true });
+          const banner = fullUser.bannerURL({ size: 1024, dynamic: true });
+          const accentColor = fullUser.hexAccentColor || '#5865F2';
+
+          const embed = new EmbedBuilder()
+            .setColor(accentColor)
+            .setTitle(`👤 ${fullUser.tag}`)
+            .setThumbnail(mainAvatar)
+            .addFields(
+              { name: '🆔 User ID', value: fullUser.id, inline: true },
+              { name: '🤖 Bot?', value: fullUser.bot ? 'Oo' : 'Hindi', inline: true },
+              { name: '📅 Account Created', value: `<t:${Math.floor(fullUser.createdTimestamp / 1000)}:R>`, inline: true },
+            );
+
+          if (banner) {
+            embed.setImage(banner);
+          }
+
+          // Server profile
+          if (member) {
+            const serverAvatar = member.displayAvatarURL({ size: 1024, dynamic: true });
+            const roles = member.roles.cache
+              .filter(r => r.id !== message.guild.id)
+              .sort((a, b) => b.position - a.position)
+              .map(r => `${r}`)
+              .slice(0, 15)
+              .join(', ') || 'Wala';
+            const nickname = member.nickname || 'Wala';
+            const boosting = member.premiumSince ? `<t:${Math.floor(member.premiumSinceTimestamp / 1000)}:R>` : 'Hindi nag-boost';
+
+            embed.addFields(
+              { name: '\u200B', value: '**── SERVER PROFILE ──**', inline: false },
+              { name: '📛 Nickname', value: nickname, inline: true },
+              { name: '📅 Joined Server', value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`, inline: true },
+              { name: '💎 Boosting', value: boosting, inline: true },
+              { name: `🎭 Roles (${member.roles.cache.size - 1})`, value: roles, inline: false },
+            );
+
+            // If server avatar is different from main avatar, show it
+            if (serverAvatar !== mainAvatar) {
+              embed.setThumbnail(serverAvatar);
+              embed.addFields({ name: '🖼️ Server Avatar', value: `[Link](${serverAvatar})`, inline: true });
+              embed.addFields({ name: '🖼️ Main Avatar', value: `[Link](${mainAvatar})`, inline: true });
+            }
+          }
+
+          embed.setFooter({ text: `Requested by ${message.author.tag}`, iconURL: message.author.displayAvatarURL() });
+          embed.setTimestamp();
+
+          await message.reply({ embeds: [embed] });
+          return;
+        }
 
         // j!chat — owner only. Mirrors g!g from gnslgbot2.
         // j!chat <channel_id or message_id> <text>
