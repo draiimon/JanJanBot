@@ -409,7 +409,7 @@ const sodium = require('libsodium-wrappers');
     }
   }
 
-  client.once('ready', async () => {
+  client.once('clientReady', async () => {
     console.log(`Logged in as ${client.user.tag}`);
     await setBotCustomStatus('lagi akong nandito para sa inyo');
     startScheduledGreetings();
@@ -596,7 +596,7 @@ const sodium = require('libsodium-wrappers');
           messages: [
             {
               role: 'system',
-              content: `DNA: ${masterPersonaDNA}\nPLANNING RULE: Mirror the USER mood 100%. If neutral, be direct/short. If angry, be angry. If baklaan, go wild. NO SLANG DUMP for facts. Format: PLAN: (short) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)`
+              content: `DNA: ${masterPersonaDNA}\nPLANNING RULE: Mirror the USER mood 100%. If neutral, be direct/short. If angry, be angry. If baklaan, go wild. NO SLANG DUMP for facts. Format: PLAN: (short) | UNIVERSAL_LEARNING: (NAME: fact | NAME: fact)`
             },
             {
               role: 'user',
@@ -642,6 +642,9 @@ const sodium = require('libsodium-wrappers');
     await performThinking();
     console.log(`[THINKING] JanJan's plan: ${internalThoughts}`);
 
+    // Clean up IDs from thoughts so JanJan doesn't see them
+    const sanitizedThoughts = internalThoughts.replace(/\d{17,20}/g, 'someone');
+
     // ============================================================
     // STEP 2: FINAL RESPONSE GENERATION (Multi-Tier Fallback)
     // ============================================================
@@ -649,7 +652,7 @@ const sodium = require('libsodium-wrappers');
       'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.';
 
     const finalMessages = [
-      { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[PLAN]: ${internalThoughts}` : '') + priorityRule },
+      { role: 'system', content: systemPrompt + (sanitizedThoughts ? `\n\n[PLAN]: ${sanitizedThoughts}` : '') + priorityRule },
       ...historyMessages,
       { role: 'user', content: userMessage }
     ];
@@ -681,10 +684,17 @@ const sodium = require('libsodium-wrappers');
           max_tokens: 200
         });
 
-        const rawResult = response.data.choices[0].message.content.trim();
-        if (rawResult) {
+        if (response.status === 200 && response.data.choices[0].message.content) {
+          let reply = response.data.choices[0].message.content.trim();
+
+          // FINAL GUARD: Strip raw IDs (17-20 digits) that are NOT in a <@...> mention
+          // This stops JanJan from outputting "ID:317867947265884180" etc.
+          reply = reply.replace(/(?<!<@|<!)\b\d{17,20}\b/g, (match) => {
+            return ''; // or match.substring(0, 4) + '...'
+          });
+
           // NUCLEAR CLEANER: Remove all forms of thinking tags and reasoning leaks
-          let cleaned = rawResult
+          let cleaned = reply
             .replace(/<[^>]*?think[^>]*?>[\s\S]*?<\/[^>]*?think[^>]*?>/gi, '') // Advanced tag strip
             .replace(/<[^>]*?think[^>]*?>[\s\S]*/gi, '')                      // Unclosed tag strip
             .replace(/<\/?[^>]*?think[^>]*?>/gi, '')                         // Stray tag strip
