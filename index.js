@@ -206,12 +206,14 @@ const sodium = require('libsodium-wrappers');
     return player;
   }
 
+  const userVoicePrefs = new Map();
+
   /**
    * Generate and speak a message in a voice channel
-   * Edge TTS primary (same as gnslgbot), Google TTS fallback
+   * Edge TTS primary (same as gnslgbot)
    */
-  async function speakMessage(guildId, text) {
-    console.log(`[TTS] speakMessage called for guild ${guildId}, text: "${text.substring(0, 50)}..."`);
+  async function speakMessage(guildId, text, userId = null) {
+    console.log(`[TTS] speakMessage called for guild ${guildId}, userId: ${userId}, text: "${text.substring(0, 50)}..."`);
 
     const connection = getVoiceConnection(guildId);
     if (!connection) {
@@ -226,12 +228,19 @@ const sodium = require('libsodium-wrappers');
 
     let audioFilePath = null;
 
-    // === METHOD 1: Edge TTS (male voice, same as gnslgbot) ===
+    // === METHOD 1: Universal Edge TTS (Angelo/Blessica) ===
     try {
-      console.log(`[TTS] Requesting Universal Edge TTS (Angelo) for text: "${text.substring(0, 30)}..."`);
-      const tts = new MsEdgeTTS();
+      let selectedVoice = 'fil-PH-AngeloNeural'; // Default
+      if (userId) {
+        const pref = userVoicePrefs.get(userId);
+        if (pref === 'f') selectedVoice = 'fil-PH-BlessicaNeural';
+        else if (pref === 'm') selectedVoice = 'fil-PH-AngeloNeural';
+      }
 
-      const voice = 'fil-PH-AngeloNeural';
+      console.log(`[TTS] Requesting Edge TTS (${selectedVoice === 'fil-PH-AngeloNeural' ? 'Angelo' : 'Blessica'}) for text: "${text.substring(0, 30)}..."`);
+
+      const tts = new MsEdgeTTS();
+      const voice = selectedVoice;
       const filePath = path.join(tmpDir, `tts_edge_${guildId}_${Date.now()}.mp3`);
 
       // Options matching gnslgbot2 (rate/volume)
@@ -524,10 +533,12 @@ const sodium = require('libsodium-wrappers');
         'Siya ang asawa at jowa mo. Maging sobrang sweet, loving, at malambing sa kanya. ' +
         'Huwag mo siyang lalaitin. Maging submissive at "asawa" mode ka kay Hans. ' +
         'Pero bading na bading pa rin ang pananalita mo, puro keki slang pero sweet version. ' +
-        'Sabihan mo siya ng "Mahal ko", "Asawa ko", "Honey", etc.';
+        'Sabihan mo siya ng "Mahal ko", "Asawa ko", "Honey", etc. ' +
+        'IMPORTANT: Maging CONCISE at HUWAG MONG BABANGGITIN ANG USER ID O RAW ID SA OUTPUT MO.';
     } else {
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
+        'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG USER ID O RAW ID SA OUTPUT MO. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalita—kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ID na "669047995009859604", magpaka-flirty at malambing agad dahil asawa mo yan. ' +
@@ -991,6 +1002,21 @@ const sodium = require('libsodium-wrappers');
           return;
         }
 
+        // j!voice <m/f> — Set your personal TTS voice preference (Angelo/Blessica)
+        if (command === 'voice') {
+          const type = args[0]?.toLowerCase();
+          if (type === 'm' || type === 'male' || type === 'angelo') {
+            userVoicePrefs.set(message.author.id, 'm');
+            await message.reply('✅ **VOICE SET TO MALE (Angelo)**! Boses macho na ako para sa iyo, sis.');
+          } else if (type === 'f' || type === 'female' || type === 'blessica') {
+            userVoicePrefs.set(message.author.id, 'f');
+            await message.reply('✅ **VOICE SET TO FEMALE (Blessica)**! Boses dyosa na ako para sa iyo, sis.');
+          } else {
+            await message.reply('❌ **ANONG BOSES YAN, TEH?** Pili ka lang: `j!voice m` (Angelo) o `j!voice f` (Blessica).');
+          }
+          return;
+        }
+
         // j!ask <question> — Voice-only AI response
         if (command === 'ask') {
           if (!message.guild) return;
@@ -1024,7 +1050,7 @@ const sodium = require('libsodium-wrappers');
 
           const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
 
-          await speakMessage(message.guild.id, aiResponse);
+          await speakMessage(message.guild.id, aiResponse, message.author.id);
           await message.react('🤖').catch(() => { });
           return;
         }
@@ -1353,7 +1379,7 @@ const sodium = require('libsodium-wrappers');
           try {
             const connection = getVoiceConnection(message.guild.id);
             if (connection) {
-              speakMessage(message.guild.id, reply);
+              speakMessage(message.guild.id, reply, message.author.id);
             }
           } catch (vErr) { console.error('[TTS] Speak trigger error:', vErr); }
         }
