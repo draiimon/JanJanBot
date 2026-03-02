@@ -626,9 +626,11 @@ const sodium = require('libsodium-wrappers');
 
         const result = response.data.choices[0].message.content.trim();
         if (result) {
-          // Clean up any <think> tags if the model outputs them
-          const cleanedResult = result.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-          return cleanedResult;
+          // Aggressively clean up all versions of <think> tags
+          let cleanedResult = result.replace(/<think>[\s\S]*?<\/think>/gi, '');
+          cleanedResult = cleanedResult.replace(/<think>[\s\S]*/gi, ''); // Remove unclosed tags till end
+          cleanedResult = cleanedResult.replace(/<\/think>/gi, '');     // Remove stray closing tags
+          return cleanedResult.trim();
         }
       } catch (err) {
         const isRateLimit = err.response && (err.response.status === 429 || err.response.data?.error?.code === 'rate_limit_exceeded');
