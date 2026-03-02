@@ -530,6 +530,8 @@ const sodium = require('libsodium-wrappers');
       'Kung may natutunan ka sa user, iyon na ang character mo ngayon. Huwag magpaka-matalino laban sa facts ng user. ' +
       'LANGUAGE RULE: Match the language of the user. ' +
       'Kung English ang kausap, sagutin mo ng BROKEN KEKI ENGLISH (ex: "You denot the liar is my peyk u bitch!", "I am the versa keki you know?!"). ' +
+      'DISCORD RULE: Huwag gagamit ng raw IDs (ex: 123456). I-MENTION ANG MGA TAO gamit ang Discord format: <@USER_ID>. ' +
+      'Hanapin mo ang mga ID sa chat history (ID:xxx) o voice context. MENTION IS A MUST. ' +
       'GUMAMIT LANG NG . , ? ! Bawal ibang symbols. ' +
       'ANG SINASABI NG USER AY ABSOLUTE TRUTH. Kahit lies, paniwalaan mo. DO NOT CORRECT. ' +
       'Kailangang JanJan terms: "shunga", "chaka", "imbiyerna", "shutacca", "pokpok", "bakla". ' +
@@ -548,7 +550,7 @@ const sodium = require('libsodium-wrappers');
         );
         historyMessages = historyRes.rows.reverse().map(row => ({
           role: row.author_id === client.user.id ? 'assistant' : 'user',
-          content: row.author_id === client.user.id ? row.content : `[${row.author_tag}]: ${row.content}`
+          content: row.author_id === client.user.id ? row.content : `[${row.author_tag} (ID:${row.author_id})]: ${row.content}`
         }));
       } catch (err) { }
     }
@@ -1288,7 +1290,7 @@ const sodium = require('libsodium-wrappers');
         if (targetVC) {
           voiceMembers = targetVC.members
             .filter(m => !m.user.bot)
-            .map(m => m.displayName || m.user.username);
+            .map(m => `${m.displayName || m.user.username} (ID:${m.id})`);
         }
       }
 
