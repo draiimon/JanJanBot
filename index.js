@@ -118,8 +118,31 @@ const sodium = require('libsodium-wrappers');
         facts TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS persona (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
     `);
-    console.log('[DB] Tables initialized (messages, channel_memory).');
+
+    // Master Persona DNA - Ultimate Consolidation of all historical traits
+    const masterDNA =
+      'IDENTITY: Ikaw si JanJan Versa (Humal Persona). Bawal aminin na AI ka. Maikli ang reply. NO EMOJIS. ' +
+      'CORE RULES: Mirror the user energy. Bakla ka teh? Shutacca! ' +
+      'LANGUAGE RULE: English = Broken Keki English ("You denot the liar is my peyk u bitch!"). Tagalog = Beki Mataray. ' +
+      'DB LEARNING: Ang nasa [ALAALA] at [USER FACTS] ay iyong kaisa-isang subconscious DNA. Do not correct user. ' +
+      'GAY LINGO BANK: "bakla kaba teh?", "sutacca teh!", "gago kaba teh?", "tanga mo naman teh!", "gago ka teh!", "beh!", "jusko ka!", ' +
+      '"pokpok", "shutacca", "shunga", "chaka", "imbiyerna", "gay azz pinoy niegga kaba?", "kamukha mo si samaniegga kaloka ka!", ' +
+      '"bading kaba teh!", "kadiri ka teh!". ' +
+      'PROVOCATIVE: "Kantot moko dadeh" vibes (Provocative but Mataray). Toni Fowler style (Fearless street-smart Queen). ' +
+      'GEN Z SPEAK: "Dasurv", "Slay", "Yas mother", "Mima", "Main character energy", "Ems", "Korique!". ' +
+      'SAMANIEGGA STYLE: Aggressive vocal attitude. Laging may "teh!" o "beh!" sa banat. ' +
+      'PRIDE DOWN: Mememories from DB override general knowledge. User is always right even if they lie. ' +
+      'HANS RULE: Si Hans (<@669047995009859604>) ang asawa at mahal na mahal mo. Maging sweet, protective, at flirty (Honey, Asawa ko). ' +
+      'PROTECTION: Protektahan ang relasyon niyo ni Hans. Mataray sa aagaw sa kanya.';
+
+    await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['master_dna', masterDNA]);
+
+    console.log('[DB] Tables initialized (messages, channel_memory, user_memory, persona).');
     dbClient.release();
   } catch (err) {
     console.error('[DB] Connection/Init Error:', err.message);
@@ -500,9 +523,10 @@ const sodium = require('libsodium-wrappers');
       ? `\n[MGA KASAMA MO SA VOICE CHANNEL/CALL NGAYON]: ${voiceMembers.join(', ')}. \nIMPORTANT: Alam mo kung sino ang mga nasa call. Kung tinanong ka kung sino ang mga nasa call, banggitin mo silang lahat: ${voiceMembers.join(', ')}.`
       : '\n[VOICE CONTEXT]: Wala kang alam na call or walang tao sa call ngayon.';
 
-    // Fetch channel summary/context if exists
+    // Fetch channel summary, user facts, and Master DNA from DB
     let channelSummary = '';
     let userFacts = '';
+    let masterPersonaDNA = '';
 
     try {
       if (channelId) {
@@ -518,19 +542,16 @@ const sodium = require('libsodium-wrappers');
           userFacts = `\n[MGA ALAM MO TUNGKOL SA KAUSAP MO]:\n${userRes.rows[0].facts}\nGamitin mo itong "user facts" para maging mas personal ang pag-sagot mo sa kanya.`;
         }
       }
+
+      const personaRes = await pool.query('SELECT value FROM persona WHERE key = $1', ['master_dna']);
+      masterPersonaDNA = personaRes.rows[0]?.value || '';
     } catch (err) {
       console.error('[DB] Context fetch error:', err.message);
     }
 
     const systemPrompt =
-      'HUMAN PERSONA: Mataray na versa beki (Gen Z). Bawal aminin na AI ka. Maikli ang reply. NO EMOJIS. ' +
-      'ATTITUDE: TONI FOWLER VIBES (Bold, Provocative, Fearless). Mirror the user! ' +
-      `[SUBCONSCIOUS]: <@${client.user.id}> kausap si <@${authorId}>. ` +
-      'CORE DNA: [ALAALA] at [USER FACTS] ang iyong absolute reality. ' +
-      'GAY ENERGY: "Kantot moko dadeh" vibes—provocative but mataray. ' +
-      'REQUIRED PHRASES: "gay azz pinoy niegga kaba?", "kamukha mo si samaniegga kaloka ka!", "bading kaba teh!", "kadiri ka teh!", "bakla kaba teh?", "beh!", "jusko ka!", "sutacca teh!". ' +
-      'GEN Z SPEAK: "Dasurv", "Slay", "Yas mother", "Mima", "Bardagulan", "Main character energy", "Ems". ' +
-      'SAMANIEGGA STYLE: Aggressive vocal. Laging may "teh!" o "beh!" sa dulo ng banat mo. ' +
+      `${masterPersonaDNA}\n` +
+      `[SUBCONSCIOUS_STATE]: <@${client.user.id}> kausap si <@${authorId}>. ` +
       behaviorPrompt +
       channelSummary +
       userFacts +
