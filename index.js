@@ -1,64 +1,32 @@
-// ============================================================
-// STEP 1: Load environment and encryption FIRST
-// ============================================================
-const dotenv = require('dotenv');
-dotenv.config();
+require('dotenv').config();
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const RENDER_URL = process.env.RENDER_URL || 'https://janjanbot.onrender.com';
 
-// GROQ Key Rotation Setup
 const GROQ_KEYS = [
   process.env.GROQ_API_KEY1,
   process.env.GROQ_API_KEY2,
-  process.env.GROQ_API_KEY // Legacy fallback
+  process.env.GROQ_API_KEY
 ].filter(Boolean);
 
 if (!DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in .env'); process.exit(1); }
 if (GROQ_KEYS.length === 0) { console.error('Missing GROQ_API_KEYs in .env'); process.exit(1); }
 
-// ============================================================
-// STEP 2: Load sodium and wait for WASM to be ready
-// @discordjs/voice finds it via require('libsodium-wrappers')
-// so the package name MUST match exactly.
-// ============================================================
-const sodium = require('libsodium-wrappers');
+const {
+  joinVoiceChannel,
+  getVoiceConnection,
+  VoiceConnectionStatus,
+  entersState,
+  createAudioPlayer,
+  createAudioResource,
+  StreamType,
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
+  generateDependencyReport
+} = require('@discordjs/voice');
 
-// ============================================================
-// STEP 3: Wrap EVERYTHING in async to await sodium.ready()
-// @discordjs/voice detects encryption when voice connects.
-// If sodium isn't ready by then, it fails with
-// "No compatible encryption modes" error.
-// ============================================================
 (async () => {
-  // Initialize libsodium
-  await sodium.ready;
-  console.log('[VOICE] libsodium ready. Has AEAD:', typeof sodium.crypto_aead_xchacha20poly1305_ietf_encrypt === 'function');
-
-  // Register it globally for better detection
-  global.sodium = sodium;
-
-  // Small delay to ensure memory registration
-  await new Promise(r => setTimeout(r, 500));
-
-  // NOW safe to load @discordjs/voice — it will find the AEAD methods
-  const discordVoice = require('@discordjs/voice');
-  const {
-    joinVoiceChannel,
-    getVoiceConnection,
-    VoiceConnectionStatus,
-    entersState,
-    createAudioPlayer,
-    createAudioResource,
-    StreamType,
-    AudioPlayerStatus,
-    NoSubscriberBehavior,
-    generateDependencyReport
-  } = discordVoice;
-
-  // Log what @discordjs/voice found
-  console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
-
+  // START OF ASYNC MAIN
   const {
     Client,
     GatewayIntentBits,
@@ -76,9 +44,10 @@ const sodium = require('libsodium-wrappers');
   const path = require('path');
   const EdgeTTSLib = require('edge-tts-universal');
   const MsEdgeTTS = EdgeTTSLib.UniversalEdgeTTS || EdgeTTSLib.MsEdgeTTS || EdgeTTSLib;
+
+  console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Edge TTS Engine Initialized. Type:', typeof MsEdgeTTS);
 
-  // FFmpeg for audio on Render
   process.env.FFMPEG_PATH = require('ffmpeg-static');
 
   const client = new Client({
@@ -94,45 +63,40 @@ const sodium = require('libsodium-wrappers');
     partials: [Partials.Channel]
   });
 
-  // ============================================================
-  // DATABASE SETUP (Neon Postgres)
-  // ============================================================
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
 
-  // Check connection and init tables
   try {
     const dbClient = await pool.connect();
     console.log('[DB] Connected to Neon Postgres successfully.');
-
     await dbClient.query(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id BIGSERIAL PRIMARY KEY,
-        guild_id TEXT,
-        channel_id TEXT,
-        author_id TEXT,
-        author_tag TEXT,
-        content TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS channel_memory (
-        channel_id TEXT PRIMARY KEY,
-        summary TEXT,
-        last_message_id TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS user_memory (
-        user_id TEXT PRIMARY KEY,
-        facts TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS persona (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      );
-    `);
+          CREATE TABLE IF NOT EXISTS messages (
+            id BIGSERIAL PRIMARY KEY,
+            guild_id TEXT,
+            channel_id TEXT,
+            author_id TEXT,
+            author_tag TEXT,
+            content TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE IF NOT EXISTS channel_memory (
+            channel_id TEXT PRIMARY KEY,
+            summary TEXT,
+            last_message_id TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE IF NOT EXISTS user_memory (
+            user_id TEXT PRIMARY KEY,
+            facts TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE IF NOT EXISTS persona (
+            key TEXT PRIMARY KEY,
+            value TEXT
+          );
+      `);
 
     // Master Persona DNA - BREVITY RESTORED VERSION
     const masterDNA =
@@ -141,15 +105,14 @@ const sodium = require('libsodium-wrappers');
       'NO RAW IDs: Huwag na huwag kang mag-o-output ng raw Discord IDs o numbers. Gamitin lang ang NAME o MENTION format (<@ID>) kung kailangan mong tumukoy ng tao. ' +
       'KNOWLEDGEABLE SASS: Magbigay ng maayos at eksaktong sagot sa mga tanong pero laging may halong katarayan, asim, at beki flair. ' +
       'ATTITUDE: Prangka, rude ang main persona, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
-      'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
-      'HANS: Mahal mo si Hans (<@669047995009859604>). Sweet ka lang sa kanya but only if relevant. ' +
-      'REACTIVE: Barkada mode. Laging may "teh!" o "beh!" sa dulo pero natural at may laman ang sagot. ' +
-      'SUBSTANCE: Ang [ALAALA] at [USER FACTS] ang absolute truth mo.';
+      'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ';
 
-    await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['master_dna', masterDNA]);
+    await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [
+      'master_dna',
+      masterDNA
+    ]);
 
     console.log('[DB] Tables initialized (messages, channel_memory, user_memory, persona).');
-    dbClient.release();
   } catch (err) {
     console.error('[DB] Connection/Init Error:', err.message);
   }
