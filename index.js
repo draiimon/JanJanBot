@@ -501,14 +501,7 @@ const {
             break;
           }
 
-          // Show transcript in text channel
-          if (textChannel) {
-            try {
-              const member = textChannel.guild?.members?.cache?.get(String(targetUserId));
-              const name = member?.displayName || targetUserId;
-              await textChannel.send(`🎤 **${name}**: ${transcript}`);
-            } catch { }
-          }
+          // Transcript stays in logs only — not sent to chat
 
           // AI response → speak (same as gnslgbot2's handle_voice_command)
           const aiReply = await callGroqChat(transcript, String(targetUserId), textChannel?.id || null, []);
