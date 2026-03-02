@@ -516,9 +516,51 @@ const sodium = require('libsodium-wrappers');
       }
     }
 
+    // ============================================================
+    // STEP 1: BACKEND THINKING (The "Catch-up" phase)
+    // ============================================================
+    let internalThoughts = '';
+    try {
+      const thinkingPayload = {
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Ikaw ay ang internal reasoning engine ni JanJan. ' +
+              'Ang task mo ay i-analyze ang usapan, ang channel memory, at ang user facts. ' +
+              'Mag-isip ka kung paano sasagot si JanJan nang pak na pak, precise, at hindi shunga. ' +
+              'Catch up on the context. Plan the response style (mataray or sassy). ' +
+              'Isulat mo ang internal thoughts mo sa isang maikling paragraph.'
+          },
+          {
+            role: 'user',
+            content:
+              `Context Memory: ${channelSummary}\n` +
+              `User Facts: ${userFacts}\n` +
+              `Latest History: ${JSON.stringify(historyMessages)}\n` +
+              `Current User Message: ${userMessage}`
+          }
+        ],
+        temperature: 0.5,
+        max_tokens: 250
+      };
+
+      const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
+        headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
+      });
+      internalThoughts = thinkingRes.data.choices?.[0]?.message?.content || '';
+      console.log(`[THINKING] JanJan's internal plan: ${internalThoughts}`);
+    } catch (err) {
+      console.error('[THINKING] Error in reasoning step:', err.message);
+    }
+
+    // ============================================================
+    // STEP 2: FINAL RESPONSE GENERATION
+    // ============================================================
     try {
       const chatMessages = [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN/THOUGHTS]: ${internalThoughts}` : '') },
         ...historyMessages,
         { role: 'user', content: userMessage }
       ];
