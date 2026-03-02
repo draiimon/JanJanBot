@@ -388,34 +388,48 @@ client.on('messageCreate', async (message) => {
         const OWNER_ID = '1477683173520572568';
         if (message.author.id !== OWNER_ID) return; // silently ignore non-owner
 
+        // Save refs BEFORE deleting the message
+        const originChannel = message.channel;
+        const originGuild = message.guild;
+
         const targetId = args.shift();
         const customMessage = args.join(' ').trim();
 
-        // Delete the j!chat command immediately
+        // Delete the j!chat command immediately (needs Manage Messages perm)
         await message.delete().catch(() => { });
 
-        if (!targetId || !customMessage) return;
+        if (!targetId || !customMessage) {
+          try {
+            const owner = await client.users.fetch(OWNER_ID);
+            await owner.send('j!chat: walang targetId o message. Format: j!chat <channel/message id> <text>');
+          } catch { }
+          return;
+        }
 
         // Try as a channel ID first
         let targetChannel = null;
         try {
           const fetched = await client.channels.fetch(targetId);
           if (fetched && fetched.isTextBased()) targetChannel = fetched;
-        } catch { }
+        } catch (e) {
+          console.error('j!chat channel fetch error:', e.message);
+        }
 
         if (targetChannel) {
-          await targetChannel.send(customMessage).catch((e) => console.error('j!chat send failed:', e.message));
+          await targetChannel.send(customMessage).catch((e) => {
+            console.error('j!chat send failed:', e.message);
+          });
           return;
         }
 
-        // Try as a message ID — check current channel first, then all guild text channels
+        // Try as a message ID — check origin channel first, then all guild text channels
         let targetMessage = null;
         try {
-          targetMessage = await message.channel.messages.fetch(targetId);
+          targetMessage = await originChannel.messages.fetch(targetId);
         } catch { }
 
-        if (!targetMessage && message.guild) {
-          for (const ch of message.guild.channels.cache.values()) {
+        if (!targetMessage && originGuild) {
+          for (const ch of originGuild.channels.cache.values()) {
             if (!ch.isTextBased()) continue;
             try {
               targetMessage = await ch.messages.fetch(targetId);
@@ -425,17 +439,20 @@ client.on('messageCreate', async (message) => {
         }
 
         if (targetMessage) {
-          await targetMessage.reply(customMessage).catch((e) => console.error('j!chat reply failed:', e.message));
+          await targetMessage.reply(customMessage).catch((e) => {
+            console.error('j!chat reply failed:', e.message);
+          });
           return;
         }
 
-        // Notify owner via DM if nothing found
+        // Nothing found — DM the owner with what was tried
         try {
           const owner = await client.users.fetch(OWNER_ID);
-          await owner.send(`j!chat failed. Walang channel or message na nakita sa ID: ${targetId}`);
+          await owner.send(`j!chat failed. Walang nakitang channel o message sa ID: ${targetId}`);
         } catch { }
         return;
       }
+
 
       // j!view
       if (command === 'view') {
