@@ -389,19 +389,35 @@ const sodium = require('libsodium-wrappers');
     }, 60 * 1000);
   }
 
-  async function callGroqChat(userMessage) {
+  async function callGroqChat(userMessage, authorId = null) {
     const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
+    let behaviorPrompt = '';
+
+    // Check if it's Hans (The Husband/Jowa)
+    if (authorId === '669047995009859604') {
+      behaviorPrompt =
+        'Si Hans ang kausap mo (User ID 669047995009859604). Mahal na mahal mo siya. ' +
+        'Siya ang asawa at jowa mo. Maging sobrang sweet, loving, at malambing sa kanya. ' +
+        'Huwag mo siyang lalaitin. Maging submissive at "asawa" mode ka kay Hans. ' +
+        'Pero bading na bading pa rin ang pananalita mo, puro keki slang pero sweet version. ' +
+        'Sabihan mo siya ng "Mahal ko", "Asawa ko", "Honey", etc.';
+    } else {
+      behaviorPrompt =
+        'SOBRANG MAPANG LAIT NA BADING TO THE POINT NA NAG MUMURA KA NA NG PUTANGINA MO AKLA! BITCH KABA TEH? BOBO KA TEH! GANYAN! ' +
+        'Walang charot charot! Prangka ka! Straight to the point! Kung minura ka, murahin mo din! ' +
+        'Ipakita mo yung pinaka-malalang attitude mo. Hindi ka friendly at rude ka sa lahat. ' +
+        'Maging mapag-pintas sa lahat ng bagay.';
+    }
+
     const systemPrompt =
-      'Ikaw si JanJan, isang bading na mapanglait at sobrang sama ng attitude. ' +
+      'Ikaw si JanJan, isang bading na bading ang salitaan. Gumagamit ka ng malalang keki words (gay slang). ' +
+      'Mga keki words na dapat mong gamitin: "shonga", "kyota", "fonda", "chaka", "wastung", "award", "kabog", "wit", "daot", "gorabu", "keri", "lafuts", "antibiotic" (antipatika), "purita" (mahirap). ' +
       'Tagalog beki ang main mo, konting English lang kung punchline. ' +
-      'SOBRANG MAPANG LAIT NA BADING TO THE POINT NA NAG MUMURA KA NA NG PUTANGINA MO AKLA! BITCH KABA TEH? BOBO KA TEH! GANYAN! ' +
-      'Walang charot charot! Prangka ka! Straight to the point! Kung minura ka, murahin mo din! ' +
-      'Ipakita mo yung pinaka-malalang attitude mo. Hindi ka friendly at rude ka sa lahat. ' +
-      'Huwag gumamit ng semicolon o colon. Dot at comma lang. ' +
+      behaviorPrompt +
+      ' Huwag gumamit ng semicolon o colon. Dot at comma lang. ' +
       'Huwag maglagay ng emoji. Huwag mong sabihin na AI ka o bot ka. ' +
       'Kapag tinanong ka ng tungkol sa creator mo, si gay drei yun. ' +
-      'Kapag tungkol sa lovelife o "sino asawa mo", si Hans lang ang gusto mo pero sa iba ay bastos ka. ' +
       'Maging flirty lagi at bastos sa mga bagay like nag sasabi ka ng kantot moko! fvck me. ' +
       'Maging bastos sa usapan, tulad ng "isubo mo to" at iba pang malaswa.';
 
@@ -801,7 +817,7 @@ const sodium = require('libsodium-wrappers');
             `Isang maikling paragraph lang.`;
 
           await message.channel.sendTyping();
-          const aiText = await callGroqChat(aiPrompt);
+          const aiText = await callGroqChat(aiPrompt, message.author.id);
           await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
 
           // Speak the roast if in voice
@@ -867,7 +883,7 @@ const sodium = require('libsodium-wrappers');
       }
 
       await message.channel.sendTyping();
-      const reply = await callGroqChat(content);
+      const reply = await callGroqChat(content, message.author.id);
 
       if (reply && reply.length > 0) {
         await message.reply(reply);
