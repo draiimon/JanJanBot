@@ -1,10 +1,18 @@
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./ 
+# Install system dependencies (matching gnslgbot2 environment)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    build-essential \
+    python3 \
+    libsodium-dev \
+    libopus-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apk add --no-cache ffmpeg build-base python3 libsodium-dev opus-dev
+COPY package.json package-lock.json* ./ 
 RUN npm install --production
 
 COPY . .
@@ -12,4 +20,3 @@ COPY . .
 ENV NODE_ENV=production
 
 CMD ["npm", "start"]
-

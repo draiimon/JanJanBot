@@ -31,10 +31,12 @@ const sodium = require('libsodium-wrappers');
 // "No compatible encryption modes" error.
 // ============================================================
 (async () => {
+  // Initialize libsodium
   await sodium.ready;
-  console.log('libsodium ready. Has AEAD:', typeof sodium.crypto_aead_xchacha20poly1305_ietf_encrypt === 'function');
+  console.log('[VOICE] libsodium ready. Has AEAD:', typeof sodium.crypto_aead_xchacha20poly1305_ietf_encrypt === 'function');
 
   // NOW safe to load @discordjs/voice — it will find the AEAD methods
+  const discordVoice = require('@discordjs/voice');
   const {
     joinVoiceChannel,
     getVoiceConnection,
@@ -46,7 +48,7 @@ const sodium = require('libsodium-wrappers');
     AudioPlayerStatus,
     NoSubscriberBehavior,
     generateDependencyReport
-  } = require('@discordjs/voice');
+  } = discordVoice;
 
   // Log what @discordjs/voice found
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
@@ -66,7 +68,7 @@ const sodium = require('libsodium-wrappers');
   const https = require('https');
   const fs = require('fs');
   const path = require('path');
-  const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
+  const { MsEdgeTTS } = require('edge-tts-universal');
 
   // FFmpeg for audio on Render
   process.env.FFMPEG_PATH = require('ffmpeg-static');
@@ -374,15 +376,21 @@ const sodium = require('libsodium-wrappers');
     });
 
     // Auto-reconnect when disconnected
+    connection.on(VoiceConnectionStatus.Ready, () => {
+      console.log(`[VOICE] Ready in guild ${guildId}! You can hear me now, teh!`);
+    });
+
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      console.log(`[VOICE] Disconnected from ${guildId}. Trying to recover...`);
       try {
-        // Give Discord 5s to signal a reconnect naturally
         await Promise.race([
-          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-          entersState(connection, VoiceConnectionStatus.Connecting, 5_000)
+          entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5000),
         ]);
         // Still alive, Discord is reconnecting
-      } catch {
+      } catch (e) {
+        console.log(`[VOICE] Permanent disconnect. Destroying connection.`);
+        connection.destroy();
         // Reconnect failed. Destroy and retry after 10s.
         console.log('Voice disconnected. Retrying in 10s...');
         try { connection.destroy(); } catch { }
