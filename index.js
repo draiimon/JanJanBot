@@ -55,6 +55,7 @@ const sodium = require('libsodium-wrappers');
   } = require('discord.js');
 
   const axios = require('axios');
+  const { Pool } = require('pg');
   const http = require('http');
   const https = require('https');
   const fs = require('fs');
@@ -76,6 +77,42 @@ const sodium = require('libsodium-wrappers');
     ],
     partials: [Partials.Channel]
   });
+
+  // ============================================================
+  // DATABASE SETUP (Neon Postgres)
+  // ============================================================
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+
+  // Check connection and init tables
+  try {
+    const dbClient = await pool.connect();
+    console.log('[DB] Connected to Neon Postgres successfully.');
+
+    await dbClient.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id BIGSERIAL PRIMARY KEY,
+        guild_id TEXT,
+        channel_id TEXT,
+        author_id TEXT,
+        author_tag TEXT,
+        content TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS channel_memory (
+        channel_id TEXT PRIMARY KEY,
+        summary TEXT,
+        last_message_id TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('[DB] Tables initialized (messages, channel_memory).');
+    dbClient.release();
+  } catch (err) {
+    console.error('[DB] Connection/Init Error:', err.message);
+  }
 
   // In-memory custom bubble status per user per guild
   const userCustomStatus = new Map();
@@ -389,7 +426,7 @@ const sodium = require('libsodium-wrappers');
     }, 60 * 1000);
   }
 
-  async function callGroqChat(userMessage, authorId = null) {
+  async function callGroqChat(userMessage, authorId = null, channelId = null) {
     const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
     let behaviorPrompt = '';
@@ -412,6 +449,19 @@ const sodium = require('libsodium-wrappers');
         'Protektahan mo ang asawa mo! Sabihin mo: "Asawa ko yan? Bakit aagawin mo ba?" o katulad nyan. Maging mataray at selosa ka sa asawa mo.';
     }
 
+    // Fetch channel summary/context if exists
+    let channelSummary = '';
+    if (channelId) {
+      try {
+        const res = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
+        if (res.rows.length > 0 && res.rows[0].summary) {
+          channelSummary = `\nContext summary of this channel: ${res.rows[0].summary}`;
+        }
+      } catch (err) {
+        console.error('[DB] Summary fetch error:', err.message);
+      }
+    }
+
     const systemPrompt =
       'Ikaw si JanJan, isang tunay na tao na bading na laging may sipon ang boses. ' +
       'Tagalog beki ang main mo. Huwag kang magpaka-AI na bading, magpaka-TAO ka na bading. ' +
@@ -424,6 +474,7 @@ const sodium = require('libsodium-wrappers');
       'Mga keki words na pang-insulto (gamitin lang sa mga shunga): "shunga", "chaka", "daot", "lafuts", "antibiotic", "purita", "warla", "imbiyerna", "shutacca", "bella flores", "haggardo versoza", "jutay", "lucita soriano", "rita avila", "losyang", "chapter", "echosera", "flordeliza", "pokpok", "gura kels", "waswit", "shonget", "luz valdez", "morayta", "borlog", "wit". ' +
       'Mga pamatay na linya sa mga tarantado: "Ang bobo mo teh!", "Gago kaba teh!", "Tarantado!", "Ano ka teh! Kamukha mo si Samaniega?!", "Gay azz pinoy niegga kaba?". ' +
       behaviorPrompt +
+      channelSummary +
       ' HUWAG NA HUWAG KANG GAGAMIT NG FIXED NA LINYA O TEMPLATE. Maging natural ka at spontaneous. ' +
       'Ang boses mo ay mataray na may sipon, yung parang laging naiirita pero nakikipag-chikahan pa rin. ' +
       'SAGUTIN MO ANG TANONG NANG DIRETSO. Iba-ibahin mo ang atake mo sa bawat reply para hindi redundant. ' +
@@ -432,15 +483,35 @@ const sodium = require('libsodium-wrappers');
       'Maging flirty lagi at bastos sa mga bagay like "kantot moko", "fvck me", "isubo mo to", "aano kakantutin na bakla ha? gusto mo ba ha?". ' +
       'Bawal ang emoji. Bawal ang magpaka-robot.';
 
+    // Fetch recent message history
+    let historyMessages = [];
+    if (channelId) {
+      try {
+        const historyRes = await pool.query(
+          'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 10',
+          [channelId]
+        );
+        historyMessages = historyRes.rows.reverse().map(row => ({
+          role: 'user',
+          content: `[${row.author_tag}]: ${row.content}`
+        }));
+      } catch (err) {
+        console.error('[DB] History fetch error:', err.message);
+      }
+    }
+
     try {
+      const chatMessages = [
+        { role: 'system', content: systemPrompt },
+        ...historyMessages,
+        { role: 'user', content: userMessage }
+      ];
+
       const response = await axios.post(
         apiUrl,
         {
           model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage }
-          ],
+          messages: chatMessages,
           temperature: 0.85,
           max_tokens: 300
         },
@@ -465,9 +536,75 @@ const sodium = require('libsodium-wrappers');
     }
   }
 
+  /**
+   * Summarize channel history to keep memory compact
+   */
+  async function updateChannelSummary(channelId) {
+    try {
+      const res = await pool.query(
+        'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 50',
+        [channelId]
+      );
+      if (res.rows.length < 10) return;
+
+      const history = res.rows.reverse().map(r => `[${r.author_tag}]: ${r.content}`).join('\n');
+      const summaryPrompt =
+        `Ghorl, gawan mo ng maikling summary itong usapan sa channel. ` +
+        `Sino ang mga character at ano ang chika nila? ` +
+        `Be brief, bullet points or one short paragraph. Beki style pa rin dapat summary.\n\n` +
+        `Usapan:\n${history}`;
+
+      const response = await axios.post(
+        'https://api.groq.com/openai/v1/chat/completions',
+        {
+          model: 'llama-3.1-8b-instant',
+          messages: [
+            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary ng chika sa channel.' },
+            { role: 'user', content: summaryPrompt }
+          ],
+          temperature: 0.5
+        },
+        { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
+      );
+
+      const summary = response.data.choices[0].message.content.trim();
+      await pool.query(
+        'INSERT INTO channel_memory (channel_id, summary, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+        'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
+        [channelId, summary]
+      );
+      console.log(`[DB] Summary updated for channel ${channelId}`);
+    } catch (err) {
+      console.error('[DB] updateChannelSummary error:', err.message);
+    }
+  }
+
   client.on('messageCreate', async (message) => {
     try {
       if (message.author.bot) return;
+
+      // Save message to DB regardless of AI trigger
+      try {
+        await pool.query(
+          'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+          [
+            message.guild?.id || 'DM',
+            message.channel.id,
+            message.author.id,
+            message.author.tag,
+            message.content || ''
+          ]
+        );
+
+        // Auto trigger summary every 20 messages in that channel
+        const countRes = await pool.query('SELECT COUNT(*) FROM messages WHERE channel_id = $1', [message.channel.id]);
+        const msgCount = parseInt(countRes.rows[0].count);
+        if (msgCount % 20 === 0) {
+          updateChannelSummary(message.channel.id);
+        }
+      } catch (dbErr) {
+        console.error('[DB] Message save error:', dbErr.message);
+      }
 
       const me = client.user;
       if (!me) return;
@@ -629,7 +766,7 @@ const sodium = require('libsodium-wrappers');
           }
 
           await message.channel.sendTyping();
-          const aiResponse = await callGroqChat(question);
+          const aiResponse = await callGroqChat(question, message.author.id, message.channel.id);
 
           await speakMessage(message.guild.id, aiResponse);
           await message.react('🤖').catch(() => { });
@@ -828,7 +965,7 @@ const sodium = require('libsodium-wrappers');
             `Isang maikling paragraph lang.`;
 
           await message.channel.sendTyping();
-          const aiText = await callGroqChat(aiPrompt, message.author.id);
+          const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id);
           await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
 
           // Speak the roast if in voice
@@ -894,7 +1031,7 @@ const sodium = require('libsodium-wrappers');
       }
 
       await message.channel.sendTyping();
-      const reply = await callGroqChat(content, message.author.id);
+      const reply = await callGroqChat(content, message.author.id, message.channel.id);
 
       if (reply && reply.length > 0) {
         await message.reply(reply);
