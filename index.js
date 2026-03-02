@@ -563,9 +563,48 @@ const {
     })();
   }
 
-  // Remember the last voice channel the bot was asked to join
-  // so it can auto-rejoin after restart
-  let savedVoiceState = null; // { channelId, guildId }
+  // =====================================================================
+  // 24/7 VOICE PERSISTENCE — saves to DB so bot survives restarts
+  // =====================================================================
+  let savedVoiceState = null; // { channelId, guildId } — cached in memory
+
+  /** Save voice state to database for persistence across restarts */
+  async function saveVoiceStateToDB(guildId, channelId) {
+    try {
+      await pool.query(
+        `INSERT INTO persona (key, value) VALUES ('voice_state', $1) ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [JSON.stringify({ guildId, channelId, savedAt: Date.now() })]
+      );
+      console.log(`[VOICE 24/7] Saved voice state to DB: guild=${guildId}, channel=${channelId}`);
+    } catch (err) {
+      console.error('[VOICE 24/7] Failed to save voice state:', err.message);
+    }
+  }
+
+  /** Clear voice state from database */
+  async function clearVoiceStateFromDB() {
+    try {
+      await pool.query(`DELETE FROM persona WHERE key = 'voice_state'`);
+      console.log('[VOICE 24/7] Cleared voice state from DB');
+    } catch (err) {
+      console.error('[VOICE 24/7] Failed to clear voice state:', err.message);
+    }
+  }
+
+  /** Load voice state from database */
+  async function loadVoiceStateFromDB() {
+    try {
+      const res = await pool.query(`SELECT value FROM persona WHERE key = 'voice_state'`);
+      if (res.rows.length > 0 && res.rows[0].value) {
+        const state = JSON.parse(res.rows[0].value);
+        console.log(`[VOICE 24/7] Loaded voice state from DB: guild=${state.guildId}, channel=${state.channelId}`);
+        return state;
+      }
+    } catch (err) {
+      console.error('[VOICE 24/7] Failed to load voice state:', err.message);
+    }
+    return null;
+  }
 
   const GREET_CHANNEL_ID = '1477702703655424254';
 
@@ -601,9 +640,19 @@ const {
     }
   }
 
-  // Join a voice channel and set up auto-reconnect on disconnect
+  // Join a voice channel and set up BULLETPROOF auto-reconnect on disconnect
+  let voiceReconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 50; // basically unlimited retries
+
   function joinAndWatch(channelId, guildId, adapterCreator) {
-    console.log(`[VOICE] Joining channel ${channelId} in guild ${guildId}`);
+    console.log(`[VOICE 24/7] Joining channel ${channelId} in guild ${guildId}`);
+
+    // Destroy existing connection first to avoid duplicates
+    try {
+      const existing = getVoiceConnection(guildId);
+      if (existing) existing.destroy();
+    } catch { }
+
     const connection = joinVoiceChannel({
       channelId,
       guildId,
@@ -614,55 +663,98 @@ const {
 
     // Log state changes
     connection.on('stateChange', (oldState, newState) => {
-      console.log(`[VOICE] Connection state: ${oldState.status} -> ${newState.status}`);
+      console.log(`[VOICE 24/7] Connection state: ${oldState.status} -> ${newState.status}`);
     });
 
     // Catch errors so the process does NOT crash
     connection.on('error', (err) => {
-      console.error('[VOICE] Connection error:', err.message, err);
+      console.error('[VOICE 24/7] Connection error:', err.message);
     });
 
-    // Auto-reconnect when disconnected
+    // On Ready — reset reconnect counter
     connection.on(VoiceConnectionStatus.Ready, () => {
-      console.log(`[VOICE] Ready in guild ${guildId}! You can hear me now, teh!`);
+      voiceReconnectAttempts = 0; // reset on successful connection
+      console.log(`[VOICE 24/7] ✅ Ready in guild ${guildId}! Nandito na ako, 24/7 mode!`);
     });
 
+    // BULLETPROOF Disconnect handler — NEVER give up
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      console.log(`[VOICE] Disconnected from ${guildId}. Trying to recover...`);
+      console.log(`[VOICE 24/7] ⚠️ Disconnected from ${guildId}. Trying to recover...`);
       try {
+        // Wait for Discord's built-in reconnect (Signalling or Connecting within 5s)
         await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, 5000),
           entersState(connection, VoiceConnectionStatus.Connecting, 5000),
         ]);
-        // Still alive, Discord is reconnecting
+        console.log('[VOICE 24/7] Discord auto-reconnecting... waiting.');
+        // Still alive — Discord is handling the reconnect
       } catch (e) {
-        console.log(`[VOICE] Permanent disconnect. Destroying connection.`);
-        connection.destroy();
-        // Reconnect failed. Destroy and retry after 10s.
-        console.log('Voice disconnected. Retrying in 10s...');
+        // Discord gave up. WE don't give up.
+        console.log(`[VOICE 24/7] Discord reconnect failed. Manual rejoin attempt...`);
         try { connection.destroy(); } catch { }
+
+        voiceReconnectAttempts++;
+        // Exponential backoff: 3s, 6s, 12s, 24s... max 60s
+        const delay = Math.min(3000 * Math.pow(2, voiceReconnectAttempts - 1), 60000);
+        console.log(`[VOICE 24/7] Retry #${voiceReconnectAttempts} in ${delay / 1000}s...`);
+
         setTimeout(() => {
           if (savedVoiceState) {
             tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
           }
-        }, 10_000);
+        }, delay);
+      }
+    });
+
+    // Handle Destroyed state — schedule rejoin
+    connection.on(VoiceConnectionStatus.Destroyed, () => {
+      console.log(`[VOICE 24/7] Connection destroyed for guild ${guildId}`);
+      // Only rejoin if we still have a saved state (not manually j!leave)
+      if (savedVoiceState && savedVoiceState.guildId === guildId) {
+        const delay = Math.min(5000 * Math.pow(2, voiceReconnectAttempts), 60000);
+        voiceReconnectAttempts++;
+        console.log(`[VOICE 24/7] Will rejoin in ${delay / 1000}s...`);
+        setTimeout(() => {
+          tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
+        }, delay);
       }
     });
 
     return connection;
   }
 
-  // Rejoin voice channel by guildId and channelId
+  // Rejoin voice channel by guildId and channelId — NEVER gives up
   async function tryRejoinVoice(guildId, channelId) {
     try {
+      // Make sure we're not already connected
+      const existing = getVoiceConnection(guildId);
+      if (existing && existing.state.status !== 'destroyed') {
+        console.log('[VOICE 24/7] Already connected, skipping rejoin.');
+        return;
+      }
+
       const guild = client.guilds.cache.get(guildId);
-      if (!guild) return;
+      if (!guild) {
+        console.log('[VOICE 24/7] Guild not found, retrying in 30s...');
+        setTimeout(() => tryRejoinVoice(guildId, channelId), 30000);
+        return;
+      }
       const channel = guild.channels.cache.get(channelId);
-      if (!channel) return;
-      console.log(`Auto-rejoining voice: ${channel.name}`);
+      if (!channel) {
+        console.log('[VOICE 24/7] Channel not found, retrying in 30s...');
+        setTimeout(() => tryRejoinVoice(guildId, channelId), 30000);
+        return;
+      }
+      console.log(`[VOICE 24/7] 🔄 Auto-rejoining voice: ${channel.name}`);
       joinAndWatch(channelId, guildId, guild.voiceAdapterCreator);
     } catch (e) {
-      console.error('Auto-rejoin failed:', e.message);
+      console.error('[VOICE 24/7] Auto-rejoin failed:', e.message);
+      // Retry in 15s
+      setTimeout(() => {
+        if (savedVoiceState) {
+          tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
+        }
+      }, 15000);
     }
   }
 
@@ -671,6 +763,38 @@ const {
     await setBotCustomStatus('lagi akong nandito para sa inyo');
     startScheduledGreetings();
     startKeepAlive();
+
+    // =====================================================================
+    // 24/7 AUTO-JOIN ON STARTUP — load saved voice state from DB
+    // =====================================================================
+    try {
+      const dbState = await loadVoiceStateFromDB();
+      if (dbState && dbState.guildId && dbState.channelId) {
+        savedVoiceState = { guildId: dbState.guildId, channelId: dbState.channelId };
+        console.log(`[VOICE 24/7] 🚀 Auto-joining saved voice channel on startup...`);
+        // Small delay to let Discord gateway stabilize
+        setTimeout(() => {
+          tryRejoinVoice(dbState.guildId, dbState.channelId);
+        }, 3000);
+      } else {
+        console.log('[VOICE 24/7] No saved voice state found. Waiting for j!join command.');
+      }
+    } catch (err) {
+      console.error('[VOICE 24/7] Startup auto-join error:', err.message);
+    }
+
+    // =====================================================================
+    // VOICE HEALTH CHECK — every 30 seconds, check if still connected
+    // If not, rejoin automatically. 24/7 talaga, walang aalis!
+    // =====================================================================
+    setInterval(async () => {
+      if (!savedVoiceState) return;
+      const connection = getVoiceConnection(savedVoiceState.guildId);
+      if (!connection || connection.state.status === 'destroyed' || connection.state.status === 'disconnected') {
+        console.log('[VOICE 24/7] ❗ Health check: NOT connected! Rejoining...');
+        tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
+      }
+    }, 30000); // every 30 seconds
   });
 
   // Keep-alive ping every 10 minutes so Render free tier stays up
@@ -1162,6 +1286,9 @@ const {
           }
 
           savedVoiceState = { channelId: voiceChannel.id, guildId: voiceChannel.guild.id };
+          // Save to DB for 24/7 persistence across restarts
+          await saveVoiceStateToDB(voiceChannel.guild.id, voiceChannel.id);
+          voiceReconnectAttempts = 0;
           joinAndWatch(voiceChannel.id, voiceChannel.guild.id, voiceChannel.guild.voiceAdapterCreator);
 
           await message.reply(`O ayan, pumasok na ako sa ${voiceChannel.name}. Nandito na ako, ghorl.`);
@@ -1180,6 +1307,8 @@ const {
             return;
           }
           savedVoiceState = null;
+          // Clear from DB so bot doesn't auto-rejoin on restart
+          await clearVoiceStateFromDB();
           connection.destroy();
           await message.reply('Umalis na ako sa voice channel. Tawagin mo ulit kapag kailangan mo ko.');
           return;
@@ -1811,9 +1940,40 @@ const {
   client.on('voiceStateUpdate', async (oldState, newState) => {
     try {
       const member = newState.member || oldState.member;
-      if (!member || member.user.bot) return;
+      if (!member) return;
 
       const guildId = newState.guild.id;
+
+      // =====================================================================
+      // 24/7 GUARD: If the BOT itself was disconnected/moved, REJOIN!
+      // =====================================================================
+      if (member.id === client.user.id) {
+        const wasInChannel = oldState.channelId;
+        const nowInChannel = newState.channelId;
+
+        if (wasInChannel && !nowInChannel && savedVoiceState) {
+          // Bot was KICKED or DISCONNECTED from voice — rejoin immediately!
+          console.log(`[VOICE 24/7] 🚨 BOT WAS KICKED/DISCONNECTED! Rejoining in 3s...`);
+          setTimeout(() => {
+            if (savedVoiceState) {
+              tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
+            }
+          }, 3000);
+          return;
+        }
+
+        if (wasInChannel && nowInChannel && wasInChannel !== nowInChannel && savedVoiceState) {
+          // Bot was MOVED to another channel — update saved state and stay
+          console.log(`[VOICE 24/7] Bot was moved to channel ${nowInChannel}. Updating saved state.`);
+          savedVoiceState = { guildId, channelId: nowInChannel };
+          await saveVoiceStateToDB(guildId, nowInChannel);
+          return;
+        }
+
+        return; // Don't announce bot's own movements
+      }
+
+      // === HUMAN USER join/leave announcements ===
       const connection = getVoiceConnection(guildId);
       if (!connection) return;
 
