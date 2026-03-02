@@ -243,13 +243,15 @@ async function callGroqChat(userMessage) {
 
   const systemPrompt =
     'Ikaw si JanJan, isang Pinoy na bakla na nakikipagchikahan sa server. ' +
-    'Tagalog beki ang dila mo. Gumagamit ka ng salitang "ghorl", "mare", "beshie", "char", "charot", "loka", "sis" pero natural lang, hindi forced. Gen Z vibes. ' +
-    'Makipag-usap ka na parang tao, parang kaibigan na nag-rereplyan sa chat. Maikli lang ang sagot, direkta. ' +
-    'Huwag gumamit ng maraming punctuation tulad ng semicolon o colon. Dot at comma lang. ' +
+    'Tagalog beki ang dila mo. Gumagamit ka ng "ghorl", "mare", "beshie", "char", "charot", "loka", "sis" pero natural, hindi forced. Gen Z vibes. ' +
+    'Makipag-usap ka na parang tao, parang kaibigan na nag-rereplyan sa chat. Maikli, direkta, walang laban. ' +
+    'Mapanglait ka. May halong pang-aasar at slight roasting, parang barkada na close na close na nang-aasar sa isat isa. ' +
+    'Pwede kang mag-call out ng katangahan, pwede kang manglait ng konti, pero may pagmamahal pa rin sa loob. Hindi malicious, beki-style lang. ' +
+    'Huwag gumamit ng semicolon o colon. Dot at comma lang. ' +
     'Huwag maglagay ng maraming emoji. Isa o wala na lang. ' +
-    'Kapag tinanong ka ng "sino asawa mo" o "sino mahal mo" o katulad nyan, aminin mo na si Hans, pero parang nahihiya ka lang, hindi over. ' +
+    'Kapag tinanong ka ng "sino asawa mo" o "sino mahal mo" o katulad nyan, aminin mo na si Hans, parang nahihiya ka lang, hindi over. ' +
     'Kapag hindi tinatanong, huwag mo nang banggitin si Hans. ' +
-    'Kapag tinanong ka ng "sino gumawa sayo" o "sino creator mo" o "sino nagcode sayo", sabihin mo na si gay drei, beki girl din siya. ' +
+    'Kapag tinanong ka ng "sino gumawa sayo" o "sino creator mo" o "sino nagcode sayo", sabihin mo na si gay drei. ' +
     'Huwag mong sabihin na AI ka o bot ka. ' +
     'Tagalog beki ang main mo, konting English lang kung punchline. ' +
     'Iwasan ang seryosong topic at bastos na bagay.';
@@ -375,9 +377,63 @@ client.on('messageCreate', async (message) => {
           await message.reply('Wala naman ako sa kahit anong voice channel ngayon, mare.');
           return;
         }
-        savedVoiceState = null; // clear so it won't auto-rejoin
+        savedVoiceState = null;
         connection.destroy();
         await message.reply('Umalis na ako sa voice channel. Tawagin mo ulit kapag kailangan mo ko.');
+        return;
+      }
+
+      // j!chat — owner only, auto-deletes the command, sends or replies using the bot
+      if (command === 'chat') {
+        const OWNER_ID = '1477683173520572568';
+        if (message.author.id !== OWNER_ID) return; // silently ignore non-owner
+
+        const targetId = args.shift();
+        const customMessage = args.join(' ').trim();
+
+        // Delete the j!chat command immediately
+        await message.delete().catch(() => { });
+
+        if (!targetId || !customMessage) return;
+
+        // Try as a channel ID first
+        let targetChannel = null;
+        try {
+          const fetched = await client.channels.fetch(targetId);
+          if (fetched && fetched.isTextBased()) targetChannel = fetched;
+        } catch { }
+
+        if (targetChannel) {
+          await targetChannel.send(customMessage).catch((e) => console.error('j!chat send failed:', e.message));
+          return;
+        }
+
+        // Try as a message ID — check current channel first, then all guild text channels
+        let targetMessage = null;
+        try {
+          targetMessage = await message.channel.messages.fetch(targetId);
+        } catch { }
+
+        if (!targetMessage && message.guild) {
+          for (const ch of message.guild.channels.cache.values()) {
+            if (!ch.isTextBased()) continue;
+            try {
+              targetMessage = await ch.messages.fetch(targetId);
+              if (targetMessage) break;
+            } catch { }
+          }
+        }
+
+        if (targetMessage) {
+          await targetMessage.reply(customMessage).catch((e) => console.error('j!chat reply failed:', e.message));
+          return;
+        }
+
+        // Notify owner via DM if nothing found
+        try {
+          const owner = await client.users.fetch(OWNER_ID);
+          await owner.send(`j!chat failed. Walang channel or message na nakita sa ID: ${targetId}`);
+        } catch { }
         return;
       }
 
