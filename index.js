@@ -107,6 +107,11 @@ const sodium = require('libsodium-wrappers');
         last_message_id TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS user_memory (
+        user_id TEXT PRIMARY KEY,
+        facts TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     console.log('[DB] Tables initialized (messages, channel_memory).');
     dbClient.release();
@@ -451,15 +456,24 @@ const sodium = require('libsodium-wrappers');
 
     // Fetch channel summary/context if exists
     let channelSummary = '';
-    if (channelId) {
-      try {
+    let userFacts = '';
+
+    try {
+      if (channelId) {
         const res = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
         if (res.rows.length > 0 && res.rows[0].summary) {
-          channelSummary = `\n[ANG IYONG ALAALA/MEMORY]:\n${res.rows[0].summary}\nGamitin mo ang iyong alaala para sagutin ang mga tanong nila tungkol sa nakaraan o sa mga chismis na alam mo na.`;
+          channelSummary = `\n[ANG IYONG ALAALA/MEMORY SA CHANNEL NA ITO]:\n${res.rows[0].summary}\n`;
         }
-      } catch (err) {
-        console.error('[DB] Summary fetch error:', err.message);
       }
+
+      if (authorId) {
+        const userRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [authorId]);
+        if (userRes.rows.length > 0 && userRes.rows[0].facts) {
+          userFacts = `\n[MGA ALAM MO TUNGKOL SA KAUSAP MO]:\n${userRes.rows[0].facts}\nGamitin mo itong "user facts" para maging mas personal ang pag-sagot mo sa kanya.`;
+        }
+      }
+    } catch (err) {
+      console.error('[DB] Context fetch error:', err.message);
     }
 
     const systemPrompt =
@@ -475,7 +489,9 @@ const sodium = require('libsodium-wrappers');
       'Mga pamatay na linya sa mga tarantado: "Ang bobo mo teh!", "Gago kaba teh!", "Tarantado!", "Ano ka teh! Kamukha mo si Samaniega?!", "Gay azz pinoy niegga kaba?". ' +
       behaviorPrompt +
       channelSummary +
-      ' HUWAG NA HUWAG KANG GAGAMIT NG FIXED NA LINYA O TEMPLATE. Maging natural ka at spontaneous. ' +
+      userFacts +
+      '\nGamitin mo ang iyong mga alaala para sagutin ang mga tanong nila tungkol sa nakaraan o sa mga chismis na alam mo na. ' +
+      'HUWAG NA HUWAG KANG GAGAMIT NG FIXED NA LINYA O TEMPLATE. Maging natural ka at spontaneous. ' +
       'Ang boses mo ay mataray na may sipon, yung parang laging naiirita pero nakikipag-chikahan pa rin. ' +
       'SAGUTIN MO ANG TANONG NANG DIRETSO. Iba-ibahin mo ang atake mo sa bawat reply para hindi redundant. ' +
       'Huwag mong i-explain ang sarili mo. Huwag mong sabihin na AI ka o bot ka. ' +
@@ -541,50 +557,82 @@ const sodium = require('libsodium-wrappers');
    */
   async function updateChannelSummary(channelId) {
     try {
-      // 1. Fetch existing memory to build upon
+      // 1. Fetch existing channel memory
       const existingRes = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
       const oldSummary = existingRes.rows.length > 0 ? existingRes.rows[0].summary : 'Wala pa tayong nasisimulang chika dito.';
 
-      // 2. Fetch new messages
+      // 2. Fetch recent messages
       const res = await pool.query(
-        'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 60',
+        'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 60',
         [channelId]
       );
       if (res.rows.length < 10) return;
 
-      const history = res.rows.reverse().map(r => `[${r.author_tag}]: ${r.content}`).join('\n');
+      const history = res.rows.reverse().map(r => `[ID:${r.author_id}] ${r.author_tag}: ${r.content}`).join('\n');
       const summaryPrompt =
         `Ghorl, itong usapan sa channel, aralin mo nang malala para hindi ka magmukhang shunga sa susunod.\n\n` +
         `Eto yung dating chika (Old Memory):\n${oldSummary}\n\n` +
         `Eto naman yung mga bagong chika ngayon (New History):\n${history}\n\n` +
-        `Gawan mo ng UPDATED summary at i-extract mo yung mga bagong "Keri to Remember":\n` +
-        `1. Updated Summary ng huling chika (brief paragraph).\n` +
-        `2. LAHAT ng Facts na natutunan (isama mo yung luma at dagdagan ng bago).\n` +
-        `3. Ugali/Personality ng mga tao sa channel (roast material).\n\n` +
-        `Be mataray and beki style. format: SHORT SUMMARY followed by LEARNED FACTS.`;
+        `Gawan mo ng dalawang bagay:\n` +
+        `1. UPDATED CHANNEL SUMMARY (brief paragraph of what happened recently + combined previous summary).\n` +
+        `2. USER-SPECIFIC FACTS (extract special facts per user ID, ex: "USER_ID: facts..."). Isama ang personality o mga preferrence nila.\n\n` +
+        `Format your response as:\n` +
+        `CHANNEL_SUMMARY: (summary text)\n` +
+        `USER_FACTS: (ID: facts... ID: facts...)`;
 
       const response = await axios.post(
         'https://api.groq.com/openai/v1/chat/completions',
         {
           model: 'llama-3.1-8b-instant',
           messages: [
-            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel para hindi ka magmukhang shunga sa susunod.' },
+            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
             { role: 'user', content: summaryPrompt }
           ],
-          temperature: 0.5
+          temperature: 0.3
         },
         { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
       );
 
-      const summary = response.data.choices[0].message.content.trim();
-      await pool.query(
-        'INSERT INTO channel_memory (channel_id, summary, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
-        'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
-        [channelId, summary]
-      );
-      console.log(`[DB] Memory/Facts cumulative update for channel ${channelId}`);
+      const aiResult = response.data.choices[0].message.content.trim();
+
+      // Parse AI response
+      const summaryMatch = aiResult.match(/CHANNEL_SUMMARY:\s*([\s\S]*?)(?=USER_FACTS:|$)/i);
+      const userFactsMatch = aiResult.match(/USER_FACTS:\s*([\s\S]*)/i);
+
+      if (summaryMatch) {
+        const newSummary = summaryMatch[1].trim();
+        await pool.query(
+          'INSERT INTO channel_memory (channel_id, summary, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+          'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
+          [channelId, newSummary]
+        );
+      }
+
+      if (userFactsMatch) {
+        const factsText = userFactsMatch[1].trim();
+        const userFactLines = factsText.split('\n');
+        for (const line of userFactLines) {
+          const match = line.match(/(\d+):\s*(.*)/);
+          if (match) {
+            const userId = match[1];
+            const fact = match[2];
+            // Cumulative user update
+            const oldUserRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
+            const oldFacts = oldUserRes.rows.length > 0 ? oldUserRes.rows[0].facts : '';
+            const combinedFacts = oldFacts ? `${oldFacts} | ${fact}` : fact;
+
+            await pool.query(
+              'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+              'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+              [userId, combinedFacts]
+            );
+          }
+        }
+      }
+
+      console.log(`[DB] Learning complete for channel ${channelId}`);
     } catch (err) {
-      console.error('[DB] updateChannelSummary error:', err.message);
+      console.error('[DB] updateChannelSummary/Learning error:', err.message);
     }
   }
 
