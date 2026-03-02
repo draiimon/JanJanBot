@@ -74,8 +74,9 @@ const sodium = require('libsodium-wrappers');
   const https = require('https');
   const fs = require('fs');
   const path = require('path');
-  const { UniversalEdgeTTS } = require('edge-tts-universal');
-  const MsEdgeTTS = UniversalEdgeTTS;
+  const EdgeTTSLib = require('edge-tts-universal');
+  const MsEdgeTTS = EdgeTTSLib.UniversalEdgeTTS || EdgeTTSLib.MsEdgeTTS || EdgeTTSLib;
+  console.log('[TTS] Edge TTS Engine Initialized. Type:', typeof MsEdgeTTS);
 
   // FFmpeg for audio on Render
   process.env.FFMPEG_PATH = require('ffmpeg-static');
