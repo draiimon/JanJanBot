@@ -22,7 +22,7 @@ if (GROQ_KEYS.length === 0) { console.error('Missing GROQ_API_KEYs in .env'); pr
 // @discordjs/voice finds it via require('libsodium-wrappers')
 // so the package name MUST match exactly.
 // ============================================================
-const sodium = require('libsodium-wrappers');
+const sodium = require('libsodium-wrappers-sumo');
 
 // ============================================================
 // STEP 3: Wrap EVERYTHING in async to await sodium.ready()
@@ -408,7 +408,7 @@ const sodium = require('libsodium-wrappers');
     }
   }
 
-  client.once('clientReady', async () => {
+  client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
     await setBotCustomStatus('lagi akong nandito para sa inyo');
     startScheduledGreetings();
@@ -702,7 +702,7 @@ const sodium = require('libsodium-wrappers');
             .replace(/^Thinking Process:[\s\S]*?(\n\n|$)/gi, '');
 
           const finalResult = cleaned.trim();
-          console.log(`[CLEANER] Raw: ${rawResult.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
+          console.log(`[CLEANER] Raw: ${reply.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
 
           // If after cleaning we have nothing, this model only gave us thoughts. TRY NEXT MODEL.
           if (!finalResult || finalResult.length < 2) {
@@ -1305,18 +1305,25 @@ const sodium = require('libsodium-wrappers');
 
       await message.channel.sendTyping();
 
+      // --- UNIVERSAL AWARENESS & LEARNING ---
+      // JanJan learns from EVERY message, not just mentions.
+      // This builds her 'CHANNEL_SUMMARY' and 'USER_FACTS' automatically.
       let voiceMembers = [];
       if (message.guild) {
-        // Check bot's VC or message sender's VC
-        let targetVC = message.guild.members.me.voice.channel;
-        if (!targetVC && message.member?.voice?.channel) {
-          targetVC = message.member.voice.channel;
-        }
+        let targetVC = message.guild.members.me.voice.channel || message.member?.voice?.channel;
         if (targetVC) {
           voiceMembers = targetVC.members
             .filter(m => !m.user.bot)
             .map(m => m.displayName || m.user.username);
         }
+      }
+
+      // If NOT mentioned and NOT a prefix command, just 'listen' but don't 'reply'.
+      if (!isMention && !rawContent.startsWith(prefix)) {
+        // We already saved the message to DB above. 
+        // We don't need to call Groq here unless we want her to 'react' spontaneously.
+        // For now, she just 'absorbs' the history via the database history log.
+        return;
       }
 
       const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers);

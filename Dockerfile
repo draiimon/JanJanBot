@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json* ./ 
 
-RUN apk add --no-cache ffmpeg build-base python3
+RUN apk add --no-cache ffmpeg build-base python3 libsodium-dev opus-dev
 RUN npm install --production
 
 COPY . .
