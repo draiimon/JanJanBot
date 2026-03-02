@@ -27,17 +27,30 @@ const fs = require('fs');
 const path = require('path');
 const { MsEdgeTTS } = require('msedge-tts');
 
-// Load sodium FIRST before anything voice-related.
-// Without this, @discordjs/voice crashes with "No compatible encryption modes."
+// Load sodium FIRST before anything else.
+// @discordjs/voice needs this for voice channel encryption.
 const sodium = require('libsodium-wrappers');
+// Also try to require sodium-native as it's the preferred one by @discordjs/voice
+try { require('sodium-native'); } catch (e) { }
+
 sodium.ready.then(() => {
   console.log('libsodium ready.');
+
+  // Login to Discord ONLY after libsodium is ready
+  if (typeof DISCORD_TOKEN !== 'undefined') {
+    client.login(DISCORD_TOKEN).then(() => {
+      // client.user might not be ready in the .then? Use clientReady
+    }).catch((err) => {
+      console.error('Failed to login to Discord:', err);
+      process.exit(1);
+    });
+  }
 }).catch((e) => {
   console.error('libsodium failed to load:', e);
+  process.exit(1);
 });
 
 dotenv.config();
-
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
@@ -110,7 +123,7 @@ async function speakMessage(guildId, text) {
     });
 
   } catch (e) {
-    console.error('speakMessage error:', e.message);
+    console.error('speakMessage error:', e);
   }
 }
 
