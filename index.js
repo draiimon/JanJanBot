@@ -1115,16 +1115,38 @@ const {
         }
 
         // j!voice / j!change <m/f> — Set voice (same as gnslgbot2's g!change m/f)
+        // After changing: speaks "Voice changed to X. This is how I sound now!" with new voice
         if (command === 'voice' || command === 'change') {
           const type = args[0]?.toLowerCase();
+
+          let genderName = null;
           if (type === 'm' || type === 'male' || type === 'angelo') {
             userVoicePrefs.set(message.author.id, 'm');
-            await message.reply('✅ **VOICE CHANGED TO MALE (Angelo)**! 👨 🔊');
+            genderName = 'male';
           } else if (type === 'f' || type === 'female' || type === 'blessica') {
             userVoicePrefs.set(message.author.id, 'f');
-            await message.reply('✅ **VOICE CHANGED TO FEMALE (Blessica)**! 👩 🔊');
+            genderName = 'female';
           } else {
-            await message.reply('❌ Gamitin: `j!change m` (Angelo/Male) o `j!change f` (Blessica/Female).');
+            await message.reply('Gamitin: `j!change m` (Angelo) o `j!change f` (Blessica).');
+            return;
+          }
+
+          const icon = genderName === 'male' ? '👨' : '👩';
+          await message.reply(`**VOICE CHANGED TO ${genderName.toUpperCase()}!** ${icon} 🔊`);
+
+          // Speak sample with the NEW voice — beki style, same as gnslgbot2
+          if (message.guild) {
+            let conn = getVoiceConnection(message.guild.id);
+            if (!conn && message.member?.voice?.channel) {
+              joinAndWatch(message.member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            if (getVoiceConnection(message.guild.id)) {
+              const sample = genderName === 'male'
+                ? `Ito na ang bagong boses ko, ghorl! Macho na macho na! Ayan, lalaki na boses ko! Slay!`
+                : `Ito na ang bagong boses ko, ghorl! Dyosa energy na! Blessica vibes, charot!`;
+              speakMessage(message.guild.id, sample, message.author.id);
+            }
           }
           return;
         }
