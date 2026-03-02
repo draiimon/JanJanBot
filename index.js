@@ -22,7 +22,7 @@ if (GROQ_KEYS.length === 0) { console.error('Missing GROQ_API_KEYs in .env'); pr
 // @discordjs/voice finds it via require('libsodium-wrappers')
 // so the package name MUST match exactly.
 // ============================================================
-const sodium = require('libsodium-wrappers-sumo');
+const sodium = require('libsodium-wrappers');
 
 // ============================================================
 // STEP 3: Wrap EVERYTHING in async to await sodium.ready()
