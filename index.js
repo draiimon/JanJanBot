@@ -508,20 +508,38 @@ const {
           let aiReply = 'Hindi ko nasagot, ghorl.';
           try {
             const fastResp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-              model: 'llama-3.1-8b-instant',
+              model: 'llama-3.3-70b-versatile',
               messages: [
                 { role: 'system', content: 'Ikaw si JanJan Versa, isang mataray na beki. Maging maikli, prangka at witty. 1-2 sentences max. Tagalog. Huwag aminin na AI ka.' },
                 { role: 'user', content: transcript }
               ],
-              max_tokens: 100,
+              max_tokens: 150,
               temperature: 0.8
             }, {
               headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-              timeout: 5000
+              timeout: 8000
             });
             aiReply = fastResp.data.choices[0]?.message?.content?.trim() || aiReply;
           } catch (aiErr) {
-            console.error('[STT] Fast AI error:', aiErr.message);
+            // Fallback to qwen3-32b
+            console.log('[STT] Fallback to qwen3-32b...');
+            try {
+              const fallbackResp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+                model: 'qwen/qwen3-32b',
+                messages: [
+                  { role: 'system', content: 'Ikaw si JanJan Versa, isang mataray na beki. Maging maikli, prangka at witty. 1-2 sentences max. Tagalog. Huwag aminin na AI ka.' },
+                  { role: 'user', content: transcript }
+                ],
+                max_tokens: 150,
+                temperature: 0.8
+              }, {
+                headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+                timeout: 8000
+              });
+              aiReply = fallbackResp.data.choices[0]?.message?.content?.trim() || aiReply;
+            } catch (e2) {
+              console.error('[STT] Both models failed:', e2.message);
+            }
           }
           console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}"`);
           await speakMessage(guildId, aiReply, String(targetUserId));
