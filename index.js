@@ -383,50 +383,52 @@ client.on('messageCreate', async (message) => {
         return;
       }
 
-      // j!chat — owner only, auto-deletes the command, sends or replies using the bot
+      // j!chat — owner only. Mirrors g!g from gnslgbot2.
+      // j!chat <channel_id or message_id> <text>
       if (command === 'chat') {
         const OWNER_ID = '1477683173520572568';
-        if (message.author.id !== OWNER_ID) return; // silently ignore non-owner
+        if (message.author.id !== OWNER_ID) return; // silent ignore
 
-        // Save refs BEFORE deleting the message
+        // Save refs before delete
         const originChannel = message.channel;
         const originGuild = message.guild;
+        const authorUser = message.author;
 
         const targetId = args.shift();
         const customMessage = args.join(' ').trim();
 
-        // Delete the j!chat command immediately (needs Manage Messages perm)
+        // Delete the command message for stealth
         await message.delete().catch(() => { });
 
         if (!targetId || !customMessage) {
-          try {
-            const owner = await client.users.fetch(OWNER_ID);
-            await owner.send('j!chat: walang targetId o message. Format: j!chat <channel/message id> <text>');
-          } catch { }
+          try { await authorUser.send('j!chat: kulang ang format. Gamitin: j!chat <channel_id o message_id> <text>'); } catch { }
           return;
         }
 
-        // Try as a channel ID first
-        let targetChannel = null;
-        try {
-          const fetched = await client.channels.fetch(targetId);
-          if (fetched && fetched.isTextBased()) targetChannel = fetched;
-        } catch (e) {
-          console.error('j!chat channel fetch error:', e.message);
+        // Cache-first then API fetch for channel
+        let targetChannel = client.channels.cache.get(targetId) || null;
+        if (targetChannel && !targetChannel.isTextBased()) targetChannel = null;
+
+        if (!targetChannel) {
+          try {
+            const fetched = await client.channels.fetch(targetId);
+            if (fetched && fetched.isTextBased()) targetChannel = fetched;
+          } catch { }
         }
 
         if (targetChannel) {
-          await targetChannel.send(customMessage).catch((e) => {
-            console.error('j!chat send failed:', e.message);
-          });
+          try {
+            await targetChannel.send(customMessage);
+            await authorUser.send(`Sent to #${targetChannel.name} (${targetChannel.id}).`);
+          } catch (e) {
+            try { await authorUser.send(`Failed to send: ${e.message}`); } catch { }
+          }
           return;
         }
 
-        // Try as a message ID — check origin channel first, then all guild text channels
+        // Not a channel — try as message ID for a reply
         let targetMessage = null;
-        try {
-          targetMessage = await originChannel.messages.fetch(targetId);
-        } catch { }
+        try { targetMessage = await originChannel.messages.fetch(targetId); } catch { }
 
         if (!targetMessage && originGuild) {
           for (const ch of originGuild.channels.cache.values()) {
@@ -439,19 +441,20 @@ client.on('messageCreate', async (message) => {
         }
 
         if (targetMessage) {
-          await targetMessage.reply(customMessage).catch((e) => {
-            console.error('j!chat reply failed:', e.message);
-          });
+          try {
+            await targetMessage.reply(customMessage);
+            await authorUser.send(`Replied to message in #${targetMessage.channel.name}.`);
+          } catch (e) {
+            try { await authorUser.send(`Failed to reply: ${e.message}`); } catch { }
+          }
           return;
         }
 
-        // Nothing found — DM the owner with what was tried
-        try {
-          const owner = await client.users.fetch(OWNER_ID);
-          await owner.send(`j!chat failed. Walang nakitang channel o message sa ID: ${targetId}`);
-        } catch { }
+        // Nothing found
+        try { await authorUser.send(`j!chat failed. Walang nakitang channel o message sa ID: ${targetId}`); } catch { }
         return;
       }
+
 
 
       // j!view
