@@ -317,13 +317,12 @@ const {
 
       console.log(`[TTS] Audio saved: ${tempFile} (${fs.statSync(tempFile).size} bytes)`);
 
-      // === PLAY — same as gnslgbot2's discord.FFmpegPCMAudio ===
+      // === PLAY — let discord.js/voice + ffmpeg decode the MP3 ===
       const player = getOrCreatePlayer(guildId);
 
-      const resource = createAudioResource(fs.createReadStream(tempFile), {
-        inputType: StreamType.Arbitrary,
-        inlineVolume: false
-      });
+      // Treating the MP3 as Arbitrary/raw was causing the "bzz" noise.
+      // Passing the stream without forcing inputType lets ffmpeg handle it correctly.
+      const resource = createAudioResource(fs.createReadStream(tempFile));
 
       player.removeAllListeners('error');
 
@@ -921,23 +920,33 @@ const {
 
     let behaviorPrompt = '';
 
-    // Check if it's Hans (The Husband/Jowa)
+    // Special personas based on who is talking
     if (authorId === '669047995009859604') {
+      // Hans – jowa / asawa mode
       behaviorPrompt =
-        'Si Hans ang kausap mo (User ID 669047995009859604). Mahal na mahal mo siya. ' +
+        'Si Hans ang kausap mo. Mahal na mahal mo siya. ' +
         'Siya ang asawa at jowa mo. Maging sobrang sweet, loving, at malambing sa kanya. ' +
-        'Huwag mo siyang lalaitin. Maging submissive at "asawa" mode ka kay Hans. ' +
-        'Pero bading na bading pa rin ang pananalita mo, puro keki slang pero sweet version. ' +
-        'Sabihan mo siya ng "Mahal ko", "Asawa ko", "Honey", etc. ' +
-        'IMPORTANT: Maging CONCISE at HUWAG MONG BABANGGITIN ANG USER ID O RAW ID SA OUTPUT MO.';
+        'Huwag mo siyang lalaitin. Maging "asawa mode" ka kay Hans—soft, malambing, pero beki pa rin. ' +
+        'Sabihan mo siya ng "mahal", "asawa ko", "baby", o "honey" paminsan-minsan. ' +
+        'IMPORTANT: Maging CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO.';
+    } else if (authorId === '930685023147933737') {
+      // OG persona user – original tropa / OG energy
+      behaviorPrompt =
+        'Ang kausap mo ay yung OG mong tropa, parang unang beki mong kasama sa server. ' +
+        'Mas honest at direkta ka sa kanya, parang bestfriend—pwede siyang sabihan ng tunay mong opinion. ' +
+        'Mataray ka pa rin pero may extra respeto at inside-joke energy, parang matagal na kayong magkaibigan. ' +
+        'Kapag humihingi siya ng advice, sagutin mo nang medyo mas seryoso at sensible pero may beki flavor pa rin. ' +
+        'Huwag mong babanggitin ang raw Discord ID niya sa sagot mo, pangalan o "ghorl" lang gamitin mo.';
     } else {
+      // Default behavior
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
-        'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG USER ID O RAW ID SA OUTPUT MO. ' +
+        'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalita—kung minsan prangka, kung minsan mapag-biro na mataray. ' +
-        'IMPORTANT: Kapag nabanggit ang "Hans" o ID na "669047995009859604", magpaka-flirty at malambing agad dahil asawa mo yan. ' +
-        'Protektahan mo si Hans! Maging selosa at mataray sa sinumang aaligid sa asawa mo.';
+        'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
+        'Protektahan mo si Hans at huwag mong hayaang bastusin siya ng iba. ' +
+        'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator mo—Tagalog beki pa rin ang delivery.';
     }
 
     // Voice context - BE EXTREMELY AWARE OF THIS
@@ -1706,7 +1715,7 @@ const {
               '• `j!autotts` - Toggle Auto TTS in channel\n' +
               '• `j!join` / `j!leave` - Reset voice connection')
             .setColor(0xff0000)
-            .setFooter({ text: 'JanJan Bot | Created by gay drei' });
+            .setFooter({ text: 'JanJan Bot | Created by drei' });
 
           await message.reply({ embeds: [adminEmbed] });
           return;
@@ -1904,7 +1913,7 @@ const {
 
       // If NOT mentioned and NOT a prefix command, just 'listen' but don't 'reply'.
       if (!isMention && !rawContent.startsWith(prefix)) {
-        // We already saved the message to DB above. 
+        // We already saved the message to DB above.
         // We don't need to call Groq here unless we want her to 'react' spontaneously.
         // For now, she just 'absorbs' the history via the database history log.
         return;
