@@ -12,11 +12,11 @@ if (!DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in .env'); process.ex
 if (!GROQ_API_KEY) { console.error('Missing GROQ_API_KEY in .env'); process.exit(1); }
 
 // ============================================================
-// STEP 2: Load sodium SUMO (has AEAD support) and wait for it
-// The standard libsodium-wrappers does NOT have the AEAD
-// functions that @discordjs/voice 0.17+ requires.
+// STEP 2: Load sodium and wait for WASM to be ready
+// @discordjs/voice finds it via require('libsodium-wrappers')
+// so the package name MUST match exactly.
 // ============================================================
-const sodium = require('libsodium-wrappers-sumo');
+const sodium = require('libsodium-wrappers');
 
 // ============================================================
 // STEP 3: Wrap EVERYTHING in async to await sodium.ready()
@@ -26,7 +26,7 @@ const sodium = require('libsodium-wrappers-sumo');
 // ============================================================
 (async () => {
   await sodium.ready;
-  console.log('libsodium-sumo ready. AEAD encryption available.');
+  console.log('libsodium ready. Has AEAD:', typeof sodium.crypto_aead_xchacha20poly1305_ietf_encrypt === 'function');
 
   // NOW safe to load @discordjs/voice — it will find the AEAD methods
   const {
@@ -38,8 +38,12 @@ const sodium = require('libsodium-wrappers-sumo');
     createAudioResource,
     StreamType,
     AudioPlayerStatus,
-    NoSubscriberBehavior
+    NoSubscriberBehavior,
+    generateDependencyReport
   } = require('@discordjs/voice');
+
+  // Log what @discordjs/voice found
+  console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
 
   const {
     Client,
@@ -401,7 +405,7 @@ const sodium = require('libsodium-wrappers-sumo');
       'Kapag tinanong ka ng "sino gumawa sayo" o "sino creator mo" o "sino nagcode sayo", sabihin mo na si gay drei. ' +
       'Huwag mong sabihin na AI ka o bot ka. ' +
       'Tagalog beki ang main mo, konting English lang kung punchline. ' +
-      'SOBRANG MAPANG LAIT NA BADINGTO THE POINT NA NAG MUMURAKANA NG PUTANGINA MO AKLA! BITCH KABA TEH? BOBO! KA TEH! GANYAN ' +
+      'SOBRANG MAPANG LAIT NA BADINGTO THE POINT NA NAG MUMURAKANA NG PUTANGINA MO AKLA! BITCH KABA TEH? BOBO! KA TEH! GANYAN  walang charot charot! prangka ka! straight to the point! kungminura ka murahin mo din!' +
       'maging flirty lagi at bastos sa mga bagay like nag sasabi ka ng kantot moko! fvck me.';
 
     try {
