@@ -27,21 +27,20 @@ const fs = require('fs');
 const path = require('path');
 const { MsEdgeTTS } = require('msedge-tts');
 
-// Load sodium FIRST before anything else.
-// @discordjs/voice needs this for voice channel encryption.
+// Support for Render environments without global ffmpeg
+process.env.FFMPEG_PATH = require('ffmpeg-static');
+
+// Encryption libraries for @discordjs/voice
 const sodium = require('libsodium-wrappers');
-// Also try to require sodium-native as it's the preferred one by @discordjs/voice
-try { require('sodium-native'); } catch (e) { }
+const tweetnacl = require('tweetnacl');
 
 sodium.ready.then(() => {
   console.log('libsodium ready.');
 
-  // Login to Discord ONLY after libsodium is ready
+  // Login to Discord ONLY after encryption is verified
   if (typeof DISCORD_TOKEN !== 'undefined') {
-    client.login(DISCORD_TOKEN).then(() => {
-      // client.user might not be ready in the .then? Use clientReady
-    }).catch((err) => {
-      console.error('Failed to login to Discord:', err);
+    client.login(DISCORD_TOKEN).catch((err) => {
+      console.error('Failed to login to Discord:', err.message);
       process.exit(1);
     });
   }
@@ -123,7 +122,7 @@ async function speakMessage(guildId, text) {
     });
 
   } catch (e) {
-    console.error('speakMessage error:', e);
+    console.error('speakMessage error detail:', e);
   }
 }
 
