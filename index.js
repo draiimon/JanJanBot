@@ -241,7 +241,7 @@ const {
       const lowerText = text.toLowerCase();
       const isFilipino = tagalogWords.some(w => lowerText.includes(w));
 
-      let genderPref = 'f'; // gnslgbot2 defaults to female
+      let genderPref = 'm'; // Default: MALE (Angelo) — same as gnslgbot2 Antonio default
       if (userId && userVoicePrefs.has(userId)) {
         const p = userVoicePrefs.get(userId);
         if (p === 'm' || p === 'f') genderPref = p;
@@ -1650,52 +1650,78 @@ const {
   });
 
   // =====================================================================
-  // VOICE STATE UPDATE — same as gnslgbot2's on_voice_state_update
-  // Announces when someone joins or leaves the bot's voice channel
+  // VOICE STATE UPDATE — AI-generated join/leave announcements
+  // Uses Groq AI to generate unique beki-style greetings and backstabs
+  // Same vibe as gnslgbot2's on_voice_state_update
   // =====================================================================
+
+  // Quick Groq call for AI-generated VC announcements (fast, short)
+  async function generateVCAnnouncement(type, displayName) {
+    const groqKey = GROQ_KEYS.find(k => k);
+    if (!groqKey) return null;
+    try {
+      const prompt = type === 'join'
+        ? `Gumawa ng ISANG maikling beki-style Filipino announcement para sa Discord voice channel. Si "${displayName}" ay PUMASOK sa VC. Gamitin ang beki words: ghorl, sis, teh, bakla, ulikba, loka, mare, charot. Maging bastos pero nakakatawa. 1-2 sentence lang. Tagalog. Walang explanation, direct na announcement lang.`
+        : `Gumawa ng ISANG maikling beki-style backstab announcement. Si "${displayName}" ay UMALIS sa Discord VC. Mag-backstab na ngayon na wala siya! Maging masama ang loob, nakakatawa, beki words: ghorl, plastic, duwag, teh, bakla, charot. 1-2 sentence lang. Tagalog. Walang explanation.`;
+
+      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+        model: 'llama-3.1-8b-instant',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 80,
+        temperature: 1.0
+      }, {
+        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+        timeout: 4000
+      });
+      return response.data.choices[0]?.message?.content?.trim() || null;
+    } catch (err) {
+      console.error('[VOICE STATE] AI generation error:', err.message);
+      return null;
+    }
+  }
+
   client.on('voiceStateUpdate', async (oldState, newState) => {
     try {
       const member = newState.member || oldState.member;
-      if (!member || member.user.bot) return; // Ignore bots
+      if (!member || member.user.bot) return;
 
       const guildId = newState.guild.id;
       const connection = getVoiceConnection(guildId);
-      if (!connection) return; // Bot not in voice, ignore
+      if (!connection) return;
 
       const botVC = newState.guild.members.me?.voice?.channel;
       if (!botVC) return;
 
       const displayName = member.displayName || member.user.username;
-
       const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
       const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
 
       if (joinedBotVC) {
-        // === USER JOINED BOT'S VC ===
-        const joinMessages = [
-          `Ayan na ang baklang ulikba na si ${displayName}! O ayan, pumasok na ang legend!`,
+        // === USER JOINED — AI-generated greeting ===
+        const fallbackJoin = [
+          `Ayan na ang baklang ulikba na si ${displayName}! Pumasok na ang legend!`,
           `Hala! Nandito na si ${displayName}! Tangina ka, late ka pa!`,
           `Ay, si ${displayName} pala yun! Handa ka na bang maging bida, ghorl?`,
-          `Nag-join na si ${displayName}! Welcome sa call, bakla ka!`,
-          `Putangina, nandito na si ${displayName}! Handa na ba kayong maingay?`,
-          `Ayan na si ${displayName}! Ang tagal mo naman, inaaabangan ka na namin!`,
+          `Nag-join na si ${displayName}! Welcome sa call, bakla!`,
+          `Putangina, nandito na si ${displayName}! Ayan na ang gulo!`,
         ];
-        const msg = joinMessages[Math.floor(Math.random() * joinMessages.length)];
-        console.log(`[VOICE STATE] ${displayName} joined → saying: "${msg}"`);
+        const aiMsg = await generateVCAnnouncement('join', displayName);
+        const msg = aiMsg || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
+        console.log(`[VOICE STATE] ${displayName} joined → "${msg}"`);
         speakMessage(guildId, msg);
 
       } else if (leftBotVC) {
-        // === USER LEFT BOT'S VC — backstab time! ===
-        const leaveMessages = [
-          `Umalis na si ${displayName}! Hmp! Pag wala na siya, pwede na tayong mag-backstab! ${displayName} kasi, plastic!`,
-          `Ay, nakiAalis na ang bruha na si ${displayName}! Bye! Wag ka nang bumalik, pangit!`,
-          `Ayun, tumakbo na si ${displayName}! Duwag! Pag wala siya mas masaya dito!`,
-          `Nag-leave na si ${displayName}! Salamat at umalis ka na, nakakainis ka naman!`,
-          `Hay, wala na si ${displayName}. Maayos na ang atmosphere. Toxic pala siya eh!`,
-          `Umalis na ang bakla na si ${displayName}! Pag wala siya mas masarap mag-backstab! Charot lang!`,
+        // === USER LEFT — AI-generated backstab ===
+        const fallbackLeave = [
+          `Umalis na si ${displayName}! Pag wala siya, pwede na tayong mag-backstab! Plastic siya!`,
+          `Ayun, tumakbo na si ${displayName}! Duwag! Mas masaya dito pag wala siya!`,
+          `Nag-leave na si ${displayName}! Salamat! Nakakainis ka naman, ghorl!`,
+          `Hay, wala na si ${displayName}. Mas maayos na ang atmosphere. Toxic siya!`,
+          `Umalis na ang bakla na si ${displayName}! Backstab time na! Charot lang ghorl!`,
         ];
-        const msg = leaveMessages[Math.floor(Math.random() * leaveMessages.length)];
-        console.log(`[VOICE STATE] ${displayName} left → saying: "${msg}"`);
+        const aiMsg = await generateVCAnnouncement('leave', displayName);
+        const msg = aiMsg || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
+        console.log(`[VOICE STATE] ${displayName} left → "${msg}"`);
         speakMessage(guildId, msg);
       }
     } catch (err) {
