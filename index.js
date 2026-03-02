@@ -362,7 +362,7 @@ const {
     const FormData = require('form-data');
     const form = new FormData();
     form.append('file', fs.createReadStream(wavFile), { filename: 'audio.wav', contentType: 'audio/wav' });
-    form.append('model', 'whisper-large-v3');
+    form.append('model', 'whisper-large-v3-turbo');
     form.append('temperature', '0');
     form.append('response_format', 'text');
     const resp = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', form, {
@@ -413,7 +413,7 @@ const {
           let silenceMs = 0;
           let resolved = false;
           const SILENCE_THRESHOLD = 2000; // gnslgbot2: self.silence_threshold = 2000
-          const SILENCE_NEEDED = 800;     // gnslgbot2: 0.8s = 800ms
+          const SILENCE_NEEDED = 500;     // 500ms for faster response (gnslgbot2: 800ms)
 
           audioStream.pipe(decoder);
 
@@ -503,8 +503,26 @@ const {
 
           // Transcript stays in logs only — not sent to chat
 
-          // AI response → speak (same as gnslgbot2's handle_voice_command)
-          const aiReply = await callGroqChat(transcript, String(targetUserId), textChannel?.id || null, []);
+          // FAST AI response for voice — use instant model, skip thinking step
+          const groqKey = GROQ_KEYS.find(k => k);
+          let aiReply = 'Hindi ko nasagot, ghorl.';
+          try {
+            const fastResp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+              model: 'llama-3.1-8b-instant',
+              messages: [
+                { role: 'system', content: 'Ikaw si JanJan Versa, isang mataray na beki. Maging maikli, prangka at witty. 1-2 sentences max. Tagalog. Huwag aminin na AI ka.' },
+                { role: 'user', content: transcript }
+              ],
+              max_tokens: 100,
+              temperature: 0.8
+            }, {
+              headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+              timeout: 5000
+            });
+            aiReply = fastResp.data.choices[0]?.message?.content?.trim() || aiReply;
+          } catch (aiErr) {
+            console.error('[STT] Fast AI error:', aiErr.message);
+          }
           console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}"`);
           await speakMessage(guildId, aiReply, String(targetUserId));
 
