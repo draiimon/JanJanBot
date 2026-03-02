@@ -35,6 +35,12 @@ const sodium = require('libsodium-wrappers');
   await sodium.ready;
   console.log('[VOICE] libsodium ready. Has AEAD:', typeof sodium.crypto_aead_xchacha20poly1305_ietf_encrypt === 'function');
 
+  // Register it globally for better detection
+  global.sodium = sodium;
+
+  // Small delay to ensure memory registration
+  await new Promise(r => setTimeout(r, 500));
+
   // NOW safe to load @discordjs/voice — it will find the AEAD methods
   const discordVoice = require('@discordjs/voice');
   const {
@@ -68,7 +74,8 @@ const sodium = require('libsodium-wrappers');
   const https = require('https');
   const fs = require('fs');
   const path = require('path');
-  const { MsEdgeTTS } = require('edge-tts-universal');
+  const EdgeTTSLib = require('edge-tts-universal');
+  const MsEdgeTTS = EdgeTTSLib.UniversalEdgeTTS || EdgeTTSLib.MsEdgeTTS || EdgeTTSLib;
 
   // FFmpeg for audio on Render
   process.env.FFMPEG_PATH = require('ffmpeg-static');
@@ -220,9 +227,14 @@ const sodium = require('libsodium-wrappers');
 
     // === METHOD 1: Edge TTS (male voice, same as gnslgbot) ===
     try {
-      console.log('[TTS] Trying Universal Edge TTS (fil-PH-AngeloNeural)...');
-      // edge-tts-universal usage (aliased in package)
-      const tts = new MsEdgeTTS();
+      console.log('[TTS] Trying Universal Edge TTS (fil-PH-AngeloNeural)... Type:', typeof MsEdgeTTS);
+      let tts;
+      try {
+        tts = new MsEdgeTTS();
+      } catch (e) {
+        console.warn('[TTS] Failed to instantiate MsEdgeTTS, trying .MsEdgeTTS constructor...', e.message);
+        tts = new MsEdgeTTS.MsEdgeTTS();
+      }
 
       const voice = 'fil-PH-AngeloNeural';
       const filePath = path.join(tmpDir, `tts_edge_${guildId}_${Date.now()}.mp3`);
