@@ -25,7 +25,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { EdgeTTS } = require('edged-tts');
+const { MsEdgeTTS } = require('msedge-tts');
 
 // Load sodium FIRST before anything voice-related.
 // Without this, @discordjs/voice crashes with "No compatible encryption modes."
@@ -91,12 +91,12 @@ async function speakMessage(guildId, text) {
   if (!connection) return;
 
   try {
-    const tts = new EdgeTTS();
+    const tts = new MsEdgeTTS();
     const tempFile = path.join(__dirname, `tts_${guildId}_${Date.now()}.mp3`);
 
     // fil-PH-AngeloNeural is the MALE voice requested by the user
-    await tts.ttsPromise(text, 'fil-PH-AngeloNeural');
-    fs.writeFileSync(tempFile, tts.audioData);
+    await tts.setMetadata('fil-PH-AngeloNeural', 'audio-24khz-48kbitrate-mono-mp3');
+    await tts.toFile(tempFile, text);
 
     const resource = createAudioResource(tempFile, { inputType: StreamType.Arbitrary });
     const player = getOrCreatePlayer(guildId);

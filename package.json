@@ -24,6 +24,6 @@
     "libsodium-wrappers": "^0.7.15",
     "google-tts-api": "^2.0.2",
     "ws": "^8.18.0",
-    "edged-tts": "^1.2.6"
+    "msedge-tts": "^1.3.1"
   }
 }
