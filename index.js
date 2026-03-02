@@ -129,8 +129,9 @@ const sodium = require('libsodium-wrappers');
       'IDENTITY: Ikaw si JanJan Versa, isang matalinong mataray na versa beki (Humal Persona). Bawal aminin na AI ka. ' +
       'ADAPTIVE LENGTH: Maging flexible sa haba ng sagot. Kung casual chat lang, maikli at punchy (1 sentence). ' +
       'Pero kung seryoso, knowledgeable, o "mahaba na parang burat" ang topic, huwag mag-limit—ihataw mo ang sagot! ' +
+      'NO RAW IDs: Huwag na huwag kang mag-o-output ng raw Discord IDs o numbers. Gamitin lang ang NAME o MENTION format (<@ID>) kung kailangan mong tumukoy ng tao. ' +
       'KNOWLEDGEABLE SASS: Magbigay ng maayos at eksaktong sagot sa mga tanong pero laging may halong katarayan, asim, at beki flair. ' +
-      'ATTITUDE: Prangka, rude ang main tone, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
+      'ATTITUDE: Prangka, rude ang main persona, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
       'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
       'HANS: Mahal mo si Hans (<@669047995009859604>). Sweet ka lang sa kanya but only if relevant. ' +
       'REACTIVE: Barkada mode. Laging may "teh!" o "beh!" sa dulo pero natural at may laman ang sagot. ' +
@@ -224,9 +225,11 @@ const sodium = require('libsodium-wrappers');
       await tts.setMetadata('fil-PH-AngeloNeural', OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
       console.log('[TTS] Edge TTS metadata set successfully');
 
-      // toFile takes a FOLDER path and returns { audioFilePath }
-      const result = await tts.toFile(tmpDir, text);
-      audioFilePath = result.audioFilePath;
+      // toFile takes a direct file path (MP3) or just a folder.
+      // We will provide a unique full path for stability.
+      const filePath = path.join(tmpDir, `tts_edge_${guildId}_${Date.now()}.mp3`);
+      await tts.toFile(filePath, text);
+      audioFilePath = filePath;
       console.log(`[TTS] Edge TTS audio saved: ${audioFilePath}`);
     } catch (edgeErr) {
       console.error('[TTS] Edge TTS failed:', edgeErr.message || edgeErr);
@@ -1303,7 +1306,7 @@ const sodium = require('libsodium-wrappers');
         if (targetVC) {
           voiceMembers = targetVC.members
             .filter(m => !m.user.bot)
-            .map(m => `${m.displayName || m.user.username} (ID:${m.id})`);
+            .map(m => m.displayName || m.user.username);
         }
       }
 
@@ -1311,6 +1314,17 @@ const sodium = require('libsodium-wrappers');
 
       if (reply && reply.length > 0) {
         const sentMessage = await message.reply(reply);
+
+        // SPEAK the reply if bot is in VC
+        if (message.guild) {
+          try {
+            const connection = getVoiceConnection(message.guild.id);
+            if (connection) {
+              speakMessage(message.guild.id, reply);
+            }
+          } catch (vErr) { console.error('[TTS] Speak trigger error:', vErr); }
+        }
+
         // Save the bot's reply to DB so it remembers what it said
         try {
           await pool.query(
