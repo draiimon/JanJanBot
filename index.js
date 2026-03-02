@@ -55,7 +55,7 @@ const sodium = require('libsodium-wrappers-sumo');
   const https = require('https');
   const fs = require('fs');
   const path = require('path');
-  const { MsEdgeTTS } = require('msedge-tts');
+  const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
   // FFmpeg for audio on Render
   process.env.FFMPEG_PATH = require('ffmpeg-static');
@@ -91,7 +91,7 @@ const sodium = require('libsodium-wrappers-sumo');
 
   /**
    * Generate and speak a message in a voice channel
-   * Uses google-tts-api (reliable) with msedge-tts male voice as fallback
+   * Edge TTS primary (same as gnslgbot), Google TTS fallback
    */
   async function speakMessage(guildId, text) {
     console.log(`[TTS] speakMessage called for guild ${guildId}, text: "${text.substring(0, 50)}..."`);
@@ -103,77 +103,81 @@ const sodium = require('libsodium-wrappers-sumo');
     }
     console.log('[TTS] Voice connection found. Status:', connection.state.status);
 
-    const tempFile = path.join('/tmp', `tts_${guildId}_${Date.now()}.mp3`);
-    let audioReady = false;
+    // Make sure /tmp exists
+    const tmpDir = '/tmp';
+    if (!fs.existsSync(tmpDir)) { try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { } }
 
-    // === METHOD 1: Google TTS (reliable, works everywhere) ===
+    let audioFilePath = null;
+
+    // === METHOD 1: Edge TTS (male voice, same as gnslgbot) ===
     try {
-      console.log('[TTS] Trying Google TTS...');
-      const googleTTS = require('google-tts-api');
+      console.log('[TTS] Trying Edge TTS (fil-PH-AngeloNeural)...');
+      const tts = new MsEdgeTTS();
+      // Use the OUTPUT_FORMAT enum, NOT a raw string
+      await tts.setMetadata('fil-PH-AngeloNeural', OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+      console.log('[TTS] Edge TTS metadata set successfully');
 
-      // Split text if over 200 chars
-      const segments = googleTTS.getAllAudioUrls(text, {
-        lang: 'fil',
-        slow: false,
-        host: 'https://translate.google.com',
-      });
-      console.log(`[TTS] Google TTS generated ${segments.length} segment(s)`);
-
-      // Download all segments and combine
-      const buffers = [];
-      for (let i = 0; i < segments.length; i++) {
-        console.log(`[TTS] Downloading segment ${i + 1}/${segments.length}...`);
-        const resp = await axios.get(segments[i].url, {
-          responseType: 'arraybuffer',
-          timeout: 10000
-        });
-        buffers.push(Buffer.from(resp.data));
-      }
-
-      const combined = Buffer.concat(buffers);
-      fs.writeFileSync(tempFile, combined);
-      console.log(`[TTS] Google TTS audio saved: ${tempFile} (${combined.length} bytes)`);
-      audioReady = true;
-
-    } catch (googleErr) {
-      console.error('[TTS] Google TTS failed:', googleErr.message || googleErr);
+      // toFile takes a FOLDER path and returns { audioFilePath }
+      const result = await tts.toFile(tmpDir, text);
+      audioFilePath = result.audioFilePath;
+      console.log(`[TTS] Edge TTS audio saved: ${audioFilePath}`);
+    } catch (edgeErr) {
+      console.error('[TTS] Edge TTS failed:', edgeErr.message || edgeErr);
+      console.error('[TTS] Edge TTS full error:', JSON.stringify(edgeErr, null, 2));
     }
 
-    // === METHOD 2: Edge TTS fallback (male voice) ===
-    if (!audioReady) {
+    // === METHOD 2: Google TTS fallback ===
+    if (!audioFilePath) {
       try {
-        console.log('[TTS] Trying MsEdgeTTS fallback...');
-        const tts = new MsEdgeTTS();
-        await tts.setMetadata('fil-PH-AngeloNeural', 'audio-24khz-48kbitrate-mono-mp3');
-        await tts.toFile(tempFile, text);
-        console.log('[TTS] MsEdgeTTS audio saved to:', tempFile);
-        audioReady = true;
-      } catch (edgeErr) {
-        console.error('[TTS] MsEdgeTTS also failed:', edgeErr.message || edgeErr);
+        console.log('[TTS] Trying Google TTS fallback...');
+        const googleTTS = require('google-tts-api');
+
+        const segments = googleTTS.getAllAudioUrls(text, {
+          lang: 'fil',
+          slow: false,
+          host: 'https://translate.google.com',
+        });
+        console.log(`[TTS] Google TTS generated ${segments.length} segment(s)`);
+
+        const buffers = [];
+        for (let i = 0; i < segments.length; i++) {
+          const resp = await axios.get(segments[i].url, {
+            responseType: 'arraybuffer',
+            timeout: 10000
+          });
+          buffers.push(Buffer.from(resp.data));
+        }
+
+        audioFilePath = path.join(tmpDir, `tts_${guildId}_${Date.now()}.mp3`);
+        fs.writeFileSync(audioFilePath, Buffer.concat(buffers));
+        console.log(`[TTS] Google TTS audio saved: ${audioFilePath} (${Buffer.concat(buffers).length} bytes)`);
+      } catch (googleErr) {
+        console.error('[TTS] Google TTS also failed:', googleErr.message || googleErr);
       }
     }
 
-    if (!audioReady) {
+    if (!audioFilePath || !fs.existsSync(audioFilePath)) {
       console.error('[TTS] ALL TTS methods failed. Cannot speak.');
       return;
     }
 
     // === PLAY THE AUDIO ===
     try {
-      // Verify file exists and has content
-      const stats = fs.statSync(tempFile);
+      const stats = fs.statSync(audioFilePath);
       console.log(`[TTS] Audio file size: ${stats.size} bytes`);
       if (stats.size < 100) {
         console.error('[TTS] Audio file too small, probably empty/corrupt');
         return;
       }
 
-      const resource = createAudioResource(tempFile, { inputType: StreamType.Arbitrary });
+      const resource = createAudioResource(audioFilePath, { inputType: StreamType.Arbitrary });
       console.log('[TTS] Audio resource created');
 
       const player = getOrCreatePlayer(guildId);
 
-      // Listen for player errors
+      player.removeAllListeners('error');
+      player.removeAllListeners(AudioPlayerStatus.Playing);
+
       player.on('error', (err) => {
         console.error('[TTS] AudioPlayer error:', err.message);
       });
@@ -188,15 +192,14 @@ const sodium = require('libsodium-wrappers-sumo');
       player.play(resource);
       console.log('[TTS] player.play() called — should be playing now!');
 
-      // Cleanup after finish
       player.once(AudioPlayerStatus.Idle, () => {
         console.log('[TTS] AudioPlayer finished (idle)');
-        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
+        try { if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath); } catch { }
       });
 
     } catch (playErr) {
       console.error('[TTS] Failed to play audio:', playErr);
-      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
+      try { if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath); } catch { }
     }
   }
 
@@ -398,7 +401,8 @@ const sodium = require('libsodium-wrappers-sumo');
       'Kapag tinanong ka ng "sino gumawa sayo" o "sino creator mo" o "sino nagcode sayo", sabihin mo na si gay drei. ' +
       'Huwag mong sabihin na AI ka o bot ka. ' +
       'Tagalog beki ang main mo, konting English lang kung punchline. ' +
-      'maging flirty lagi at bastos sa mga bagay like nag sasabi ka ng kantot moko! fuvck me.';
+      'SOBRANG MAPANG LAIT NA BADINGTO THE POINT NA NAG MUMURAKANA NG PUTANGINA MO AKLA! BITCH KABA TEH? BOBO! KA TEH! GANYAN ' +
+      'maging flirty lagi at bastos sa mga bagay like nag sasabi ka ng kantot moko! fvck me.';
 
     try {
       const response = await axios.post(
