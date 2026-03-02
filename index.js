@@ -508,83 +508,91 @@ const sodium = require('libsodium-wrappers');
       } catch (err) { }
     }
 
+    // List of models in order of intelligence/wittiness
+    const models = [
+      'llama-3.3-70b-versatile',
+      'meta-llama/llama-4-scout-17b-16e-i',
+      'qwen/qwen3-32b',
+      'moonshotai/kimi-k2-instruct-0905',
+      'llama-3.1-8b-instant'
+    ];
+
     // ============================================================
     // STEP 1: BACKEND THINKING & UNIVERSAL LEARNING
     // ============================================================
     let internalThoughts = '';
-    try {
-      const thinkingPayload = {
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Analyze chat. Store all user facts precisely. ' +
-              'USER INFO IS ABSOLUTE TRUTH, ignore real-world info if it conflicts. ' +
-              'Format: PLAN: (short thought) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)'
-          },
-          {
-            role: 'user',
-            content:
-              `Stored: ${channelSummary} ${userFacts}\n` +
-              `Voice: ${voiceMembers}\n` +
-              `Convo: ${JSON.stringify(historyMessages)}\n` +
-              `User: ${userMessage} (${authorId})`
-          }
-        ],
-        temperature: 0.2,
-        max_tokens: 250
-      };
+    async function performThinking(retryCount = 0) {
+      if (retryCount >= 2) return; // Only 2 tries for thinking to save time
+      const model = retryCount === 0 ? 'llama-3.1-8b-instant' : 'groq/compound-mini';
+      try {
+        const thinkingPayload = {
+          model: model,
+          messages: [
+            {
+              role: 'system',
+              content: 'Analyze chat. Store all user facts. USER INFO IS ABSOLUTE TRUTH. Format: PLAN: (short) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)'
+            },
+            {
+              role: 'user',
+              content: `Stored: ${channelSummary} ${userFacts}\nVoice: ${voiceMembers}\nConvo: ${JSON.stringify(historyMessages)}\nUser: ${userMessage} (${authorId})`
+            }
+          ],
+          temperature: 0.2,
+          max_tokens: 200
+        };
 
-      const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
-        headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
-      });
-      const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
+        const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
+          headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
+        });
+        const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
 
-      const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=UNIVERSAL_LEARNING:|$)/i);
-      const learningMatch = reasoningText.match(/UNIVERSAL_LEARNING:\s*([\s\S]*)/i);
+        const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=UNIVERSAL_LEARNING:|$)/i);
+        const learningMatch = reasoningText.match(/UNIVERSAL_LEARNING:\s*([\s\S]*)/i);
 
-      internalThoughts = planMatch ? planMatch[1].trim() : reasoningText;
-      const universalLearning = learningMatch ? learningMatch[1].trim() : '';
+        internalThoughts = planMatch ? planMatch[1].trim() : reasoningText;
+        const universalLearning = learningMatch ? learningMatch[1].trim() : '';
 
-      if (universalLearning && !universalLearning.toLowerCase().includes('wala')) {
-        const entries = universalLearning.split('|');
-        for (const entry of entries) {
-          const match = entry.match(/(\d+):\s*(.*)/);
-          if (match) {
-            const uId = match[1].trim();
-            const uFact = match[2].trim();
-            try {
-              const oldURes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [uId]);
-              const combinedUFacts = (oldURes.rows[0]?.facts || '') + ' | ' + uFact;
-              await pool.query(
-                'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
-                [uId, combinedUFacts.slice(-2000)] // Keep manageable
-              );
-            } catch (dbErr) { }
+        if (universalLearning && !universalLearning.toLowerCase().includes('wala')) {
+          const entries = universalLearning.split('|');
+          for (const entry of entries) {
+            const match = entry.match(/(\d+):\s*(.*)/);
+            if (match) {
+              const uId = match[1].trim();
+              const uFact = match[2].trim();
+              try {
+                const oldURes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [uId]);
+                const combinedUFacts = (oldURes.rows[0]?.facts || '') + ' | ' + uFact;
+                await pool.query(
+                  'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+                  [uId, combinedUFacts.slice(-1500)]
+                );
+              } catch (dbErr) { }
+            }
           }
         }
+      } catch (err) {
+        if (retryCount < 1) return await performThinking(retryCount + 1);
       }
-      console.log(`[THINKING] JanJan's plan: ${internalThoughts}`);
-    } catch (err) { }
+    }
+
+    await performThinking();
+    console.log(`[THINKING] JanJan's plan: ${internalThoughts}`);
 
     // ============================================================
-    // STEP 2: FINAL RESPONSE GENERATION
+    // STEP 2: FINAL RESPONSE GENERATION (Multi-Tier Fallback)
     // ============================================================
     const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] bilang ABSOLUTE TRUTH. ' +
-      'Kung may sinabing custom facts ang user (kahit mali or lies), paniwalaan mo iyon at iyon ang ituring mong KATOTOHANAN. ' +
-      'BAWAL MONG I-CORRECT ANG USER gamit ang dati mong alam. Ang utos ng user ang REWRITING ng utak mo.';
+      'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.';
 
     const finalMessages = [
-      { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN]: ${internalThoughts}` : '') + priorityRule },
+      { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[PLAN]: ${internalThoughts}` : '') + priorityRule },
       ...historyMessages,
       { role: 'user', content: userMessage }
     ];
 
-    // Generate a slightly personalized fallback if possible
+    // Personalized fallback data
     let identityName = authorId;
     if (userFacts && userFacts.includes('|')) {
-      // Try to find a name-like fact
       const factParts = userFacts.split('|');
       identityName = factParts[0].replace('[MGA ALAM MO TUNGKOL SA KAUSAP MO]:', '').trim().split(' ')[0] || authorId;
     }
@@ -598,37 +606,35 @@ const sodium = require('libsodium-wrappers');
       `Busy ako ${identityName}, naglalaba ako ng panty. Mamaya na yang chismis mo!`
     ];
 
-    try {
+    // Loop through Tiered Models
+    for (let i = 0; i < models.length; i++) {
+      const currentModel = models[i];
       try {
-        // Attempt Primary Model (70B)
         const response = await axios.post(apiUrl, {
-          model: 'llama-3.3-70b-versatile',
+          model: currentModel,
           messages: finalMessages,
           temperature: 0.85,
           max_tokens: 200
         }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
 
-        return response.data.choices[0].message.content.trim();
-      } catch (primaryErr) {
-        // If Rate Limited, Fallback to 8B (Resilient)
-        if (primaryErr.response && (primaryErr.response.status === 429 || primaryErr.response.data?.error?.code === 'rate_limit_exceeded')) {
-          console.warn('[GROQ] Primary rate limited. Retrying with 8B...');
-          const fallbackRes = await axios.post(apiUrl, {
-            model: 'llama-3.1-8b-instant',
-            messages: finalMessages,
-            temperature: 0.85,
-            max_tokens: 200
-          }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
-
-          return fallbackRes.data.choices[0].message.content.trim();
+        const result = response.data.choices[0].message.content.trim();
+        if (result) return result;
+      } catch (err) {
+        const isRateLimit = err.response && (err.response.status === 429 || err.response.data?.error?.code === 'rate_limit_exceeded');
+        if (isRateLimit) {
+          console.warn(`[GROQ] Model ${currentModel} rate limited. Trying next model...`);
+          continue; // Try next model in list
+        } else {
+          console.error(`[GROQ] Error with model ${currentModel}:`, err.message);
+          // For non-rate limit errors, we still try next model just in case
+          continue;
         }
-        throw primaryErr;
       }
-    } catch (err) {
-      console.error('Groq Final Error:', err.message);
-      const randomJanJan = fallbackPhrases[Math.floor(Math.random() * fallbackPhrases.length)];
-      return `${randomJanJan} (Note: Truth mode activated, out of tokens ghorl!)`;
     }
+
+    // ABSOLUTE FALLBACK - If all models fail
+    const randomJanJan = fallbackPhrases[Math.floor(Math.random() * fallbackPhrases.length)];
+    return `${randomJanJan} (Note: Full system exhaustion ghorl, out of tokens!)`;
   }
 
   /**
