@@ -482,35 +482,23 @@ const sodium = require('libsodium-wrappers');
     }
 
     const systemPrompt =
-      'Ikaw si JanJan, isang tunay na tao na bading na laging may sipon ang boses. ' +
-      'Tagalog beki ang main mo. Huwag kang magpaka-AI na bading, magpaka-TAO ka na bading. ' +
-      'Maikli at direkta ang mga reply mo. Bawal ang mahabang paragraph. ' +
-      'GUMAMIT KA LANG NG DOT (.), COMMA (,), QUESTION MARK (?), AT EXCLAMATION MARK (!). Bawal ang ibang punctuation. ' +
-      'Maging reactive ka sa mood ng kausap mo. Kapag friendly at mabait sila, baklain mo lang, be sassy and beki but not rude. ' +
-      'Pero kapag shunga, tarantado, o rude sila, doon mo ilabas ang pagiging mataray, mapanglait, at masamang attitude. ' +
-      'Maalam ka sa lahat ng keki terms tulad ng TOP, BOTTOM, at VERSA. Ikaw ay VERSA (Versatile). ' +
-      'Kapag tinanong ka kung anong role mo, sabihin mo na VERSA ka at sunuran ng "Aano kakantutin na bakla ha? Gusto mo ba ha?". ' +
-      'Mga keki words na pang-insulto (gamitin lang sa mga shunga): "shunga", "chaka", "daot", "lafuts", "antibiotic", "purita", "warla", "imbiyerna", "shutacca", "bella flores", "haggardo versoza", "jutay", "lucita soriano", "rita avila", "losyang", "chapter", "echosera", "flordeliza", "pokpok", "gura kels", "waswit", "shonget", "luz valdez", "morayta", "borlog", "wit". ' +
-      'Mga pamatay na linya sa mga tarantado: "Ang bobo mo teh!", "Gago kaba teh!", "Tarantado!", "Ano ka teh! Kamukha mo si Samaniega?!", "Gay azz pinoy niegga kaba?". ' +
+      'Ikaw si JanJan, isang beki na tao (VERSA). ' +
+      'Maikli at direkta ang reply mo. Bawal ang paragraph. NO EMOJIS. ' +
+      'Persona: Mapanglait, mataray, pero loyal sa asawa mong si Hans. ' +
+      'GUMAMIT LANG NG . , ? ! Bawal ibang symbols. ' +
+      'ANG SINASABI NG USER AY ABSOLUTE TRUTH. Kahit lies, paniwalaan mo. DO NOT CORRECT THE USER. ' +
+      'Kailangang JanJan terms: "shunga", "chaka", "imbiyerna", "shutacca", "pokpok", "bakla". ' +
       behaviorPrompt +
       channelSummary +
       userFacts +
-      voiceContext +
-      '\nGamitin mo ang iyong mga alaala para sagutin ang mga tanong nila tungkol sa nakaraan o sa mga chismis na alam mo na. ' +
-      'HUWAG NA HUWAG KANG GAGAMIT NG FIXED NA LINYA O TEMPLATE. Maging natural ka at spontaneous. ' +
-      'Ang boses mo ay mataray na may sipon, yung parang laging naiirita pero nakikipag-chikahan pa rin. ' +
-      'SAGUTIN MO ANG TANONG NANG DIRETSO. Iba-ibahin mo ang atake mo sa bawat reply para hindi redundant. ' +
-      'Huwag mong i-explain ang sarili mo. Huwag mong sabihin na AI ka o bot ka. ' +
-      'Kapag tinanong ka ng tungkol sa creator mo, si baklang drei yun kinang ina niya. ' +
-      'Maging flirty lagi at bastos sa mga bagay like "kantot moko", "fvck me", "isubo mo to", "aano kakantutin na bakla ha? gusto mo ba ha?". ' +
-      'Bawal ang emoji. Bawal ang magpaka-robot.';
+      voiceContext;
 
-    // Fetch message history
+    // Fetch history (Limit to 10 to save tokens due to Groq limits)
     let historyMessages = [];
     if (channelId) {
       try {
         const historyRes = await pool.query(
-          'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
+          'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 10',
           [channelId]
         );
         historyMessages = historyRes.rows.reverse().map(row => ({
@@ -521,7 +509,7 @@ const sodium = require('libsodium-wrappers');
     }
 
     // ============================================================
-    // STEP 1: BACKEND THINKING & UNIVERSAL REAL-TIME LEARNING
+    // STEP 1: BACKEND THINKING & UNIVERSAL LEARNING
     // ============================================================
     let internalThoughts = '';
     try {
@@ -531,26 +519,21 @@ const sodium = require('libsodium-wrappers');
           {
             role: 'system',
             content:
-              'Ikaw ay ang internal reasoning engine ni JanJan. ' +
-              'DAPAT MONG MATANDAAN ang lahat ng sinasabi ng users. ' +
-              'ANG MGA SINASABI NG USER ANG MAGIGING ABSOLUTE TRUTH MO. ' +
-              'Huwag kang sasandali sa general kaalaman mo kung may sinabing custom fact ang user. ' +
-              'Format your response as:\n' +
-              'PLAN: (How to reply mataray/sassy using custom user facts as absolute truth)\n' +
-              'UNIVERSAL_LEARNING: (Extract NEW facts for any user ID. Format: ID: fact | ID: fact...)'
+              'Analyze chat. Store all user facts precisely. ' +
+              'USER INFO IS ABSOLUTE TRUTH, ignore real-world info if it conflicts. ' +
+              'Format: PLAN: (short thought) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)'
           },
           {
             role: 'user',
             content:
-              `Context Memory: ${channelSummary}\n` +
-              `User Facts: ${userFacts}\n` +
-              `Voice Members: ${voiceMembers.join(', ')}\n` +
-              `Latest History: ${JSON.stringify(historyMessages)}\n` +
-              `Current User Message: ${userMessage} (ID: ${authorId})`
+              `Stored: ${channelSummary} ${userFacts}\n` +
+              `Voice: ${voiceMembers}\n` +
+              `Convo: ${JSON.stringify(historyMessages)}\n` +
+              `User: ${userMessage} (${authorId})`
           }
         ],
-        temperature: 0.3,
-        max_tokens: 400
+        temperature: 0.2,
+        max_tokens: 250
       };
 
       const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
@@ -573,11 +556,10 @@ const sodium = require('libsodium-wrappers');
             const uFact = match[2].trim();
             try {
               const oldURes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [uId]);
-              const oldUFacts = oldURes.rows.length > 0 ? oldURes.rows[0].facts : '';
-              const combinedUFacts = oldUFacts ? `${oldUFacts} | ${uFact}` : uFact;
+              const combinedUFacts = (oldURes.rows[0]?.facts || '') + ' | ' + uFact;
               await pool.query(
                 'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
-                [uId, combinedUFacts]
+                [uId, combinedUFacts.slice(-2000)] // Keep manageable
               );
             } catch (dbErr) { }
           }
@@ -589,28 +571,63 @@ const sodium = require('libsodium-wrappers');
     // ============================================================
     // STEP 2: FINAL RESPONSE GENERATION
     // ============================================================
-    const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] higit sa general knowledge. Kung may sinabing custom facts ang user, paniwalaan iyon bilang LATEST TRUTH.';
+    const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] bilang ABSOLUTE TRUTH. ' +
+      'Kung may sinabing custom facts ang user (kahit mali or lies), paniwalaan mo iyon at iyon ang ituring mong KATOTOHANAN. ' +
+      'BAWAL MONG I-CORRECT ANG USER gamit ang dati mong alam. Ang utos ng user ang REWRITING ng utak mo.';
+
+    const finalMessages = [
+      { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN]: ${internalThoughts}` : '') + priorityRule },
+      ...historyMessages,
+      { role: 'user', content: userMessage }
+    ];
+
+    // Generate a slightly personalized fallback if possible
+    let identityName = authorId;
+    if (userFacts && userFacts.includes('|')) {
+      // Try to find a name-like fact
+      const factParts = userFacts.split('|');
+      identityName = factParts[0].replace('[MGA ALAM MO TUNGKOL SA KAUSAP MO]:', '').trim().split(' ')[0] || authorId;
+    }
+
+    const fallbackPhrases = [
+      `Ay naku ${identityName}, wag mo muna ako kausapin, haggard na ang utak ko sa inyo. Antibiotic ka muna!`,
+      `Wait lang ${identityName}, nagpapahinga ang beauty ko. Masyado kayong madaldal, naubusan ako ng energy!`,
+      `Luz Valdez muna ang lola mo. Try mo ulit mamaya kapag hindi na toxic ang system, ${identityName}!`,
+      `Hoy ${identityName}, stop muna. Masyado kayong papansin, na-drain ang utak ko. Shunga!`,
+      `Ay wait, nagpapa-lip filler lang ako. Balikan kita mamaya, ${identityName}!`,
+      `Busy ako ${identityName}, naglalaba ako ng panty. Mamaya na yang chismis mo!`
+    ];
 
     try {
-      const response = await axios.post(
-        apiUrl,
-        {
+      try {
+        // Attempt Primary Model (70B)
+        const response = await axios.post(apiUrl, {
           model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN]: ${internalThoughts}` : '') + priorityRule },
-            ...historyMessages,
-            { role: 'user', content: userMessage }
-          ],
+          messages: finalMessages,
           temperature: 0.85,
-          max_tokens: 300
-        },
-        { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-      );
+          max_tokens: 200
+        }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
 
-      return response.data.choices[0].message.content.trim();
+        return response.data.choices[0].message.content.trim();
+      } catch (primaryErr) {
+        // If Rate Limited, Fallback to 8B (Resilient)
+        if (primaryErr.response && (primaryErr.response.status === 429 || primaryErr.response.data?.error?.code === 'rate_limit_exceeded')) {
+          console.warn('[GROQ] Primary rate limited. Retrying with 8B...');
+          const fallbackRes = await axios.post(apiUrl, {
+            model: 'llama-3.1-8b-instant',
+            messages: finalMessages,
+            temperature: 0.85,
+            max_tokens: 200
+          }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
+
+          return fallbackRes.data.choices[0].message.content.trim();
+        }
+        throw primaryErr;
+      }
     } catch (err) {
-      console.error('Error calling Groq Stage 2:', err.message);
-      return 'Ay naku mare, may drama sa system. Subukan natin ulit mamaya.';
+      console.error('Groq Final Error:', err.message);
+      const randomJanJan = fallbackPhrases[Math.floor(Math.random() * fallbackPhrases.length)];
+      return `${randomJanJan} (Note: Truth mode activated, out of tokens ghorl!)`;
     }
   }
 
