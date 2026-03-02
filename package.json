@@ -26,7 +26,7 @@
     "@discordjs/opus": "^0.9.0",
     "google-tts-api": "^2.0.2",
     "ws": "^8.18.0",
-    "msedge-tts": "^1.3.1",
+    "msedge-tts": "npm:edge-tts-universal@^1.3.3",
     "ffmpeg-static": "^5.2.0",
     "pg": "^8.13.1"
   }

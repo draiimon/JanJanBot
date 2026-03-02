@@ -218,21 +218,24 @@ const sodium = require('libsodium-wrappers');
 
     // === METHOD 1: Edge TTS (male voice, same as gnslgbot) ===
     try {
-      console.log('[TTS] Trying Edge TTS (fil-PH-AngeloNeural)...');
+      console.log('[TTS] Trying Universal Edge TTS (fil-PH-AngeloNeural)...');
+      // edge-tts-universal usage (aliased in package)
       const tts = new MsEdgeTTS();
-      // Use the OUTPUT_FORMAT enum, NOT a raw string
-      await tts.setMetadata('fil-PH-AngeloNeural', OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      console.log('[TTS] Edge TTS metadata set successfully');
 
-      // toFile takes a direct file path (MP3) or just a folder.
-      // We will provide a unique full path for stability.
+      const voice = 'fil-PH-AngeloNeural';
       const filePath = path.join(tmpDir, `tts_edge_${guildId}_${Date.now()}.mp3`);
-      await tts.toFile(filePath, text);
+
+      // Options matching gnslgbot2 (rate/volume)
+      const options = {
+        rate: '+10%',
+        volume: '+30%'
+      };
+
+      await tts.synthesizeToFile(filePath, text, voice, options);
       audioFilePath = filePath;
-      console.log(`[TTS] Edge TTS audio saved: ${audioFilePath}`);
+      console.log(`[TTS] Universal Edge TTS audio saved: ${audioFilePath}`);
     } catch (edgeErr) {
-      console.error('[TTS] Edge TTS failed:', edgeErr.message || edgeErr);
-      console.error('[TTS] Edge TTS full error:', JSON.stringify(edgeErr, null, 2));
+      console.error('[TTS] Universal Edge TTS failed:', edgeErr.message || edgeErr);
     }
 
     // === METHOD 2: Google TTS fallback ===
@@ -571,12 +574,11 @@ const sodium = require('libsodium-wrappers');
     }
 
 
-    // JanJan's Tiered Intelligence Matrix (Priority Model Fallback)
+    // JanJan's Tiered Intelligence Matrix (Priority Model Fallback - UPDATED 2025)
     const models = [
-      'qwen/qwen3-32b',                     // === [PINAKA MAIN / FLAGSHIP MODEL] ===
-      'llama-3.3-70b-versatile',            // Powerhouse Secondary
-      'meta-llama/llama-4-scout-17b-16e-i', // Elite Preview
-      'moonshotai/kimi-k2-instruct-0905',   // Multi-lingual Specialist
+      'llama-3.3-70b-versatile',            // === [PINAKA MAIN / FLAGSHIP MODEL] ===
+      'qwen-2.5-coder-32b',                 // Smart Coding & Logic
+      'deepseek-r1-distill-llama-70b',      // High Reasoning Power
       'groq/compound',                      // Stable Powerhouse
       'groq/compound-mini',                 // Efficient Alternative
       'llama-3.1-8b-instant'                // Last Resort (Safety Net)
