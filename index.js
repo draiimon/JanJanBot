@@ -181,10 +181,50 @@ const {
   // ============================================================
 
   /**
+   * Resolve all Discord mentions (<@ID>, <@!ID>, <@&roleID>, <#channelID>)
+   * to human-readable names for TTS. Stops TTS from reading out raw number IDs.
+   */
+  function resolveMentionsForTTS(text, guildId) {
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) return text;
+
+    // Replace user mentions <@ID> and <@!ID> with display name or username
+    text = text.replace(/<@!?(\d{17,20})>/g, (match, id) => {
+      const member = guild.members.cache.get(id);
+      if (member) return member.displayName || member.user.username;
+      const user = client.users.cache.get(id);
+      if (user) return user.displayName || user.username;
+      return ''; // unknown user, just remove it
+    });
+
+    // Replace role mentions <@&ID> with role name
+    text = text.replace(/<@&(\d{17,20})>/g, (match, id) => {
+      const role = guild.roles.cache.get(id);
+      return role ? role.name : '';
+    });
+
+    // Replace channel mentions <#ID> with channel name
+    text = text.replace(/<#(\d{17,20})>/g, (match, id) => {
+      const channel = guild.channels.cache.get(id);
+      return channel ? channel.name : '';
+    });
+
+    // Remove any leftover raw long number IDs (17-20 digits) not in mention format
+    text = text.replace(/\b\d{17,20}\b/g, '');
+
+    // Clean up extra whitespace
+    text = text.replace(/\s{2,}/g, ' ').trim();
+
+    return text;
+  }
+
+  /**
    * Generate TTS audio via Edge TTS (exact gnslgbot2 params)
    * and add to guild queue. Processes queue if not playing.
    */
   async function speakMessage(guildId, text, userId = null) {
+    // Resolve all Discord mentions to readable names before TTS
+    text = resolveMentionsForTTS(text, guildId);
     console.log(`[TTS] speakMessage called for guild ${guildId}, text: "${text.substring(0, 50)}..."`);
 
     const connection = getVoiceConnection(guildId);
@@ -1875,15 +1915,8 @@ const {
       if (reply && reply.length > 0) {
         const sentMessage = await message.reply(reply);
 
-        // SPEAK the reply if bot is in VC
-        if (message.guild) {
-          try {
-            const connection = getVoiceConnection(message.guild.id);
-            if (connection) {
-              speakMessage(message.guild.id, reply, message.author.id);
-            }
-          } catch (vErr) { console.error('[TTS] Speak trigger error:', vErr); }
-        }
+        // NOTE: For normal chat/mentions, we DO NOT auto‑TTS the reply anymore.
+        // TTS is only triggered explicitly via j!vc / j!ask / j!test / voice events.
 
         // Save the bot's reply to DB so it remembers what it said
         try {
@@ -1984,31 +2017,53 @@ const {
       const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
       const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
 
+      const isHans = member.id === '669047995009859604';
+
       if (joinedBotVC) {
-        // === USER JOINED — AI-generated greeting ===
-        const fallbackJoin = [
-          `Ayan na ang baklang ulikba na si ${displayName}! Pumasok na ang legend!`,
-          `Hala! Nandito na si ${displayName}! Tangina ka, late ka pa!`,
-          `Ay, si ${displayName} pala yun! Handa ka na bang maging bida, ghorl?`,
-          `Nag-join na si ${displayName}! Welcome sa call, bakla!`,
-          `Putangina, nandito na si ${displayName}! Ayan na ang gulo!`,
-        ];
-        const aiMsg = await generateVCAnnouncement('join', displayName);
-        const msg = aiMsg || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
+        // === USER JOINED ===
+        let msg;
+        if (isHans) {
+          const hansJoinLines = [
+            `Ayan na ang love life ko na si ${displayName}. Kumpleto na ang call, pwede na ko magpaka malanding bad bitch.`,
+            `Uy, pumasok na si ${displayName} sa VC. Behave kayo, asawa ko yan dito.`,
+            `${displayName} has entered the chat... at syempre, biglang gumanda mood ko ghorl.`
+          ];
+          msg = hansJoinLines[Math.floor(Math.random() * hansJoinLines.length)];
+        } else {
+          const fallbackJoin = [
+            `Ayan na ang baklang ulikba na si ${displayName}! Pumasok na ang legend!`,
+            `Hala! Nandito na si ${displayName}! Tangina ka, late ka pa!`,
+            `Ay, si ${displayName} pala yun! Handa ka na bang maging bida, ghorl?`,
+            `Nag-join na si ${displayName}! Welcome sa call, bakla!`,
+            `Nandito na si ${displayName}! Ayan na ang gulo at chismis!`
+          ];
+          const aiMsg = await generateVCAnnouncement('join', displayName);
+          msg = aiMsg || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
+        }
         console.log(`[VOICE STATE] ${displayName} joined → "${msg}"`);
         speakMessage(guildId, msg);
 
       } else if (leftBotVC) {
-        // === USER LEFT — AI-generated backstab ===
-        const fallbackLeave = [
-          `Umalis na si ${displayName}! Pag wala siya, pwede na tayong mag-backstab! Plastic siya!`,
-          `Ayun, tumakbo na si ${displayName}! Duwag! Mas masaya dito pag wala siya!`,
-          `Nag-leave na si ${displayName}! Salamat! Nakakainis ka naman, ghorl!`,
-          `Hay, wala na si ${displayName}. Mas maayos na ang atmosphere. Toxic siya!`,
-          `Umalis na ang bakla na si ${displayName}! Backstab time na! Charot lang ghorl!`,
-        ];
-        const aiMsg = await generateVCAnnouncement('leave', displayName);
-        const msg = aiMsg || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
+        // === USER LEFT ===
+        let msg;
+        if (isHans) {
+          const hansLeaveLines = [
+            `Umalis na si ${displayName} sa VC, kaya medyo malungkot na ulit ang lola mo. Balik ka agad ha.`,
+            `Nag-leave si ${displayName}. Sige na, pahinga ka muna love, babantayan ko pa rin tong mga bakla dito.`,
+            `Bye muna si ${displayName}, pero sa puso ko, naka-stay ka pa rin ghorl. Char.`
+          ];
+          msg = hansLeaveLines[Math.floor(Math.random() * hansLeaveLines.length)];
+        } else {
+          const fallbackLeave = [
+            `Umalis na si ${displayName}! Pag wala siya, pwede na tayong mag-backstab, char.`,
+            `Ayun, tumakbo na si ${displayName}! Mas maingay pa rin tayo kahit wala siya.`,
+            `Nag-leave na si ${displayName}! Sige, magpahinga ka dyan, babalik ka rin.`,
+            `Hay, wala na si ${displayName}. Medyo tahimik pero tuloy ang chikahan.`,
+            `Umalis na ang bakla na si ${displayName}! Next victim please.`
+          ];
+          const aiMsg = await generateVCAnnouncement('leave', displayName);
+          msg = aiMsg || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
+        }
         console.log(`[VOICE STATE] ${displayName} left → "${msg}"`);
         speakMessage(guildId, msg);
       }
