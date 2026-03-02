@@ -5,11 +5,17 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const RENDER_URL = process.env.RENDER_URL || 'https://janjanbot.onrender.com';
 
+// GROQ Key Rotation Setup
+const GROQ_KEYS = [
+  process.env.GROQ_API_KEY1,
+  process.env.GROQ_API_KEY2,
+  process.env.GROQ_API_KEY // Legacy fallback
+].filter(Boolean);
+
 if (!DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in .env'); process.exit(1); }
-if (!GROQ_API_KEY) { console.error('Missing GROQ_API_KEY in .env'); process.exit(1); }
+if (GROQ_KEYS.length === 0) { console.error('Missing GROQ_API_KEYs in .env'); process.exit(1); }
 
 // ============================================================
 // STEP 2: Load sodium and wait for WASM to be ready
@@ -129,6 +135,38 @@ const sodium = require('libsodium-wrappers');
   // Spam prevention for AI triggers (to save Groq tokens)
   const aiUserCooldowns = new Map();
   const aiChannelCooldowns = new Map();
+
+  // API Key Rotation Persistence
+  let currentKeyIndex = 0;
+  const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+
+  /**
+   * Helper to call Groq with automatic key rotation
+   */
+  async function performGroqRequest(payload) {
+    const maxKeys = GROQ_KEYS.length;
+    let attempts = 0;
+
+    while (attempts < maxKeys) {
+      const key = GROQ_KEYS[currentKeyIndex];
+      try {
+        const res = await axios.post(apiUrl, payload, {
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }
+        });
+        return res;
+      } catch (err) {
+        const isRateLimit = err.response && (err.response.status === 429 || err.response.data?.error?.code === 'rate_limit_exceeded');
+        if (isRateLimit && maxKeys > 1) {
+          console.warn(`[GROQ] Key ${currentKeyIndex + 1} exhausted. Rotating to next key...`);
+          currentKeyIndex = (currentKeyIndex + 1) % maxKeys;
+          attempts++;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error('All Groq keys exhausted.');
+  }
 
   function getOrCreatePlayer(guildId) {
     if (audioPlayers.has(guildId)) return audioPlayers.get(guildId);
@@ -515,6 +553,7 @@ const sodium = require('libsodium-wrappers');
       } catch (err) { }
     }
 
+
     // List of models in order of intelligence/wittiness
     const models = [
       'llama-3.3-70b-versatile',
@@ -531,7 +570,7 @@ const sodium = require('libsodium-wrappers');
     // ============================================================
     let internalThoughts = '';
     async function performThinking(retryCount = 0) {
-      if (retryCount >= 2) return; // Only 2 tries for thinking to save time
+      if (retryCount >= 2) return;
       const model = retryCount === 0 ? 'llama-3.1-8b-instant' : 'groq/compound-mini';
       try {
         const thinkingPayload = {
@@ -550,9 +589,7 @@ const sodium = require('libsodium-wrappers');
           max_tokens: 200
         };
 
-        const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
-          headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
-        });
+        const thinkingRes = await performGroqRequest(thinkingPayload);
         const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
 
         const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=UNIVERSAL_LEARNING:|$)/i);
@@ -619,12 +656,12 @@ const sodium = require('libsodium-wrappers');
     for (let i = 0; i < models.length; i++) {
       const currentModel = models[i];
       try {
-        const response = await axios.post(apiUrl, {
+        const response = await performGroqRequest({
           model: currentModel,
           messages: finalMessages,
           temperature: 0.85,
           max_tokens: 200
-        }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
+        });
 
         const rawResult = response.data.choices[0].message.content.trim();
         if (rawResult) {
@@ -693,18 +730,14 @@ const sodium = require('libsodium-wrappers');
         `CHANNEL_SUMMARY: (summary text)\n` +
         `USER_FACTS: (ID: facts... ID: facts...)`;
 
-      const response = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        {
-          model: 'llama-3.1-8b-instant',
-          messages: [
-            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
-            { role: 'user', content: summaryPrompt }
-          ],
-          temperature: 0.3
-        },
-        { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-      );
+      const response = await performGroqRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
+          { role: 'user', content: summaryPrompt }
+        ],
+        temperature: 0.3
+      });
 
       const aiResult = response.data.choices[0].message.content.trim();
 
