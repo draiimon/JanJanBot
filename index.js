@@ -321,15 +321,20 @@ const {
   }
 
   // =====================================================================
-  // STT ENGINE — same as gnslgbot2's speech_recognition_cog
-  // Listens to a user's voice, decodes Opus→PCM→WAV, runs stt.py,
-  // then calls Groq AI and speaks the response via TTS.
+  // STT ENGINE — EXACT copy of gnslgbot2's VoiceSink + process_audio
+  // Uses: Groq Whisper API (whisper-large-v3) — same model as gnslgbot2
+  // Uses: receiver.speaking events — same as gnslgbot2's VoiceSink.write()
+  // Silence: 800ms (gnslgbot2 = 0.8s)
+  // Min audio: 96000 bytes (gnslgbot2: skip <96000 bytes)
+  // Stop words: stop, cancel, hinto, tigil, tama na
+  // Only listens to the user who triggered j!ask (target_user_id filter)
   // =====================================================================
 
-  const listeningGuilds = new Set();    // guilds where bot is actively listening
-  const activeVoiceUsers = new Map();   // guildId -> userId
+  const listeningGuilds = new Set();
+  const activeVoiceUsers = new Map();
+  const listeningCleanup = new Map(); // guildId -> cleanup function
 
-  /** Build a valid WAV file from raw PCM (48kHz, 2ch, 16-bit) */
+  /** Build a valid WAV file from raw PCM (48kHz, 2ch, 16-bit) — same as gnslgbot2's wave.open */
   function pcmToWav(pcmBuffer) {
     const sampleRate = 48000, channels = 2, bitDepth = 16;
     const dataLength = pcmBuffer.length;
@@ -352,31 +357,63 @@ const {
   }
 
   /**
-   * Listen to one utterance from a user, run STT, call AI, speak reply.
-   * Loops while guild is in listeningGuilds (same as gnslgbot2's listen loop).
+   * Transcribe audio using Groq Whisper — EXACT same as gnslgbot2:
+   * groq_client.audio.transcriptions.create(model="whisper-large-v3", temperature=0)
    */
-  async function listenAndRespond(guildId, userId, textChannel) {
-    if (!listeningGuilds.has(guildId)) return;
+  async function transcribeWithGroq(wavFile) {
+    const groqKey = GROQ_KEYS.find(k => k) || null;
+    if (!groqKey) throw new Error('No Groq API key');
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', fs.createReadStream(wavFile), { filename: 'audio.wav', contentType: 'audio/wav' });
+    form.append('model', 'whisper-large-v3');
+    form.append('temperature', '0');
+    form.append('response_format', 'text');
+    const resp = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', form, {
+      headers: { 'Authorization': `Bearer ${groqKey}`, ...form.getHeaders() },
+      timeout: 30000
+    });
+    return (resp.data || '').toString().trim();
+  }
 
+  /**
+   * Start voice listening mode for a specific user — mirrors gnslgbot2's VoiceSink:
+   * - Uses receiver.speaking events (like VoiceSink.write() amplitude detection)
+   * - 800ms silence = end of speech (gnslgbot2: 0.8s)
+   * - Skips clips < 96000 bytes (gnslgbot2: <96000 = too short)
+   * - Only processes audio from targetUserId (gnslgbot2: target_user_id filter)
+   * - Uses Groq Whisper for transcription (same model: whisper-large-v3)
+   * - Stop words: stop, cancel, hinto, tigil, tama na
+   */
+  function startVoiceListening(guildId, targetUserId, textChannel) {
     const connection = getVoiceConnection(guildId);
-    if (!connection) { listeningGuilds.delete(guildId); return; }
+    if (!connection) return;
 
-    try {
-      const prism = require('prism-media');
-      const receiver = connection.receiver;
+    const receiver = connection.receiver;
+    const prism = require('prism-media');
+    let isProcessing = false;
 
-      // Subscribe to this user's audio — collect until 1.5s silence
-      const audioStream = receiver.subscribe(userId, {
-        end: { behavior: EndBehaviorType.AfterSilence, duration: 1500 }
+    const onSpeakingStart = async (speakingUserId) => {
+      // Only listen to target user (gnslgbot2: if self.target_user_id and user.id != self.target_user_id: return)
+      if (String(speakingUserId) !== String(targetUserId)) return;
+      if (!listeningGuilds.has(guildId)) return;
+      if (isProcessing) {
+        console.log('[STT] Still processing previous speech, skipping...');
+        return;
+      }
+
+      // Subscribe to user audio with 800ms AfterSilence (gnslgbot2: 0.8s silence threshold)
+      const audioStream = receiver.subscribe(speakingUserId, {
+        end: { behavior: EndBehaviorType.AfterSilence, duration: 800 }
       });
 
       const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
       const chunks = [];
 
       audioStream.pipe(decoder);
-      decoder.on('data', (chunk) => chunks.push(chunk));
+      decoder.on('data', ch => chunks.push(ch));
 
-      await new Promise((resolve) => {
+      await new Promise(resolve => {
         decoder.on('end', resolve);
         decoder.on('error', resolve);
         audioStream.on('error', resolve);
@@ -384,65 +421,82 @@ const {
 
       const pcm = Buffer.concat(chunks);
 
-      // Too short = background noise, skip
-      if (pcm.length < 8000) {
-        if (listeningGuilds.has(guildId)) setImmediate(() => listenAndRespond(guildId, userId, textChannel));
+      // gnslgbot2: if len(audio_data) < 96000: skip (< ~1 second)
+      if (pcm.length < 96000) {
+        console.log(`[STT] Skipping short clip (${pcm.length} bytes < 96000)`);
         return;
       }
 
-      // Write WAV file
+      isProcessing = true;
       const tmpDir = '/tmp';
-      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-      const wavFile = path.join(tmpDir, `stt_${userId}_${Date.now()}.wav`);
-      fs.writeFileSync(wavFile, pcmToWav(pcm));
+      const wavFile = path.join(tmpDir, `stt_${speakingUserId}_${Date.now()}.wav`);
 
-      // Run stt.py (same as gnslgbot2's recognize_google)
-      const transcript = await new Promise((resolve) => {
-        const py = spawn('python3', ['stt.py', wavFile]);
-        let out = '';
-        py.stdout.on('data', (d) => { out += d.toString(); });
-        py.on('close', () => resolve(out.trim()));
-        py.on('error', () => resolve(''));
-      });
+      try {
+        fs.writeFileSync(wavFile, pcmToWav(pcm));
+        console.log(`[STT] Processing audio (${pcm.length} bytes)...`);
 
-      try { if (fs.existsSync(wavFile)) fs.unlinkSync(wavFile); } catch { }
+        // gnslgbot2: groq_client.audio.transcriptions.create(model="whisper-large-v3")
+        const transcript = await transcribeWithGroq(wavFile);
+        console.log(`[STT] Whisper transcription: "${transcript}"`);
 
-      if (!transcript) {
-        console.log('[STT] Nothing recognized, listening again...');
-        if (listeningGuilds.has(guildId)) setImmediate(() => listenAndRespond(guildId, userId, textChannel));
-        return;
+        try { fs.unlinkSync(wavFile); } catch { }
+
+        // gnslgbot2: if text and len(text) > 2: process
+        if (!transcript || transcript.length <= 2) {
+          console.log('[STT] Transcript too short, ignoring');
+          return;
+        }
+
+        // gnslgbot2: stop keywords check
+        const stopWords = ['stop', 'cancel', 'hinto', 'tigil', 'tama na', 'tumigil', 'wag na'];
+        if (stopWords.includes(transcript.toLowerCase().trim())) {
+          listeningGuilds.delete(guildId);
+          activeVoiceUsers.delete(guildId);
+          const cleanup = listeningCleanup.get(guildId);
+          if (cleanup) { cleanup(); listeningCleanup.delete(guildId); }
+          await speakMessage(guildId, 'Okay, stopping conversation.');
+          return;
+        }
+
+        // Show transcript in text channel (same as gnslgbot2 print log)
+        if (textChannel) {
+          try {
+            const member = textChannel.guild?.members?.cache?.get(String(speakingUserId));
+            const name = member?.displayName || speakingUserId;
+            await textChannel.send(`🎤 **${name}**: ${transcript}`);
+          } catch { }
+        }
+
+        // gnslgbot2: handle_voice_command(guild_id, user_id, text) → AI → speak
+        const aiReply = await callGroqChat(transcript, String(speakingUserId), textChannel?.id || null, []);
+        console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}"`);
+        await speakMessage(guildId, aiReply, String(speakingUserId));
+
+        // Wait for TTS to finish before listening again
+        const player = getOrCreatePlayer(guildId);
+        await new Promise(resolve => {
+          if (player.state.status === AudioPlayerStatus.Idle) { resolve(); return; }
+          player.once(AudioPlayerStatus.Idle, resolve);
+          setTimeout(resolve, 30000);
+        });
+
+      } catch (err) {
+        console.error('[STT] Error:', err.message || err);
+        try { if (fs.existsSync(wavFile)) fs.unlinkSync(wavFile); } catch { }
+      } finally {
+        isProcessing = false;
       }
+    };
 
-      console.log(`[STT] Transcribed from ${userId}: "${transcript}"`);
+    // Register speaking event listener (like gnslgbot2's vc.listen(sink))
+    receiver.speaking.on('start', onSpeakingStart);
+    console.log(`[STT] Voice listening started for user ${targetUserId} in guild ${guildId}`);
 
-      // Send transcript to text channel (same as gnslgbot2 console log)
-      if (textChannel) {
-        try { await textChannel.send(`🎤 **${textChannel.guild?.members?.cache?.get(userId)?.displayName || userId}**: ${transcript}`); } catch { }
-      }
-
-      // Get AI response (same as gnslgbot2's handle_voice_command)
-      const aiReply = await callGroqChat(transcript, String(userId), textChannel?.id || null, []);
-      console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}..."`);
-
-      // Speak the reply (TTS)
-      await speakMessage(guildId, aiReply, String(userId));
-
-      // Wait for TTS to finish, then listen again
-      const player = getOrCreatePlayer(guildId);
-      await new Promise((resolve) => {
-        if (player.state.status === AudioPlayerStatus.Idle) { resolve(); return; }
-        player.once(AudioPlayerStatus.Idle, resolve);
-        setTimeout(resolve, 30000); // max 30s wait
-      });
-
-    } catch (err) {
-      console.error('[STT] Error in listenAndRespond:', err.message || err);
-    }
-
-    // Loop: keep listening
-    if (listeningGuilds.has(guildId)) {
-      setImmediate(() => listenAndRespond(guildId, userId, textChannel));
-    }
+    // Store cleanup function for j!stop
+    listeningCleanup.set(guildId, () => {
+      receiver.speaking.off('start', onSpeakingStart);
+      console.log(`[STT] Voice listening stopped for guild ${guildId}`);
+    });
   }
 
   // Remember the last voice channel the bot was asked to join
@@ -1087,7 +1141,7 @@ const {
             joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
           }
 
-          await speakMessage(message.guild.id, text);
+          await speakMessage(message.guild.id, text, message.author.id);
           await message.react('🔊').catch(() => { });
           return;
         }
@@ -1195,7 +1249,7 @@ const {
             const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
             await message.reply(`🎤 **GAME NA!** I'm listening in **${member.voice.channel.name}**! Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
             speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
-            listenAndRespond(message.guild.id, message.author.id, message.channel).catch(e => console.error('[STT] loop err:', e));
+            startVoiceListening(message.guild.id, message.author.id, message.channel);
           }
           return;
         }
@@ -1225,7 +1279,7 @@ const {
           const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
           await message.reply(`🎤 **NAKIKINIG NA AKO!** Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
           speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
-          listenAndRespond(message.guild.id, message.author.id, message.channel).catch(e => console.error('[STT] loop err:', e));
+          startVoiceListening(message.guild.id, message.author.id, message.channel);
           return;
         }
 
@@ -1238,6 +1292,9 @@ const {
           }
           listeningGuilds.delete(message.guild.id);
           activeVoiceUsers.delete(message.guild.id);
+          // Call cleanup to remove speaking event listener
+          const cleanup = listeningCleanup.get(message.guild.id);
+          if (cleanup) { cleanup(); listeningCleanup.delete(message.guild.id); }
           await message.reply('🛑 **TUMIGIL NA AKO!** Naupong na ang tenga ko, mare.');
           return;
         }
