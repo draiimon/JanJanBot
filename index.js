@@ -385,16 +385,14 @@ client.on('messageCreate', async (message) => {
 
       // j!chat — owner only. Mirrors g!g from gnslgbot2.
       // j!chat <channel_id or message_id> <text>
-      // j!chat — owner only. Mirrors g!g from gnslgbot2.
-      // j!chat <channel_id or message_id> <text>
       if (command === 'chat') {
-        const OWNER_ID = '1477683173520572568';
+        const OWNERS = ['1477683173520572568', '705770837399306332'];
         const originChannel = message.channel;
         const originGuild = message.guild;
         const authorUser = message.author;
 
-        // Verify owner ID or Administrator perm (as fallback for owner ID issues)
-        const isOwner = message.author.id === OWNER_ID;
+        // Verify owner ID or Administrator perm
+        const isOwner = OWNERS.includes(message.author.id);
         const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
 
         if (!isOwner && !isAdmin) return; // Silent ignore for non-admins
@@ -466,10 +464,12 @@ client.on('messageCreate', async (message) => {
 
       // j!whoami — Verify user ID for permissions
       if (command === 'whoami' || command === 'myid') {
+        const owners = ['1477683173520572568', '705770837399306332'];
+        const isOwner = owners.includes(message.author.id);
         const idEmbed = new EmbedBuilder()
           .setTitle('🆔 Identity Check')
-          .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${message.author.id === '1477683173520572568' ? '✅ You are the **Owner**.' : '❌ You are not the owner ID.'}`)
-          .setColor(message.author.id === '1477683173520572568' ? 0x00ff00 : 0xff0000);
+          .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? '✅ You are an **Authorized Owner**.' : '❌ You are not in the owner whitelist.'}`)
+          .setColor(isOwner ? 0x00ff00 : 0xff0000);
         await message.reply({ embeds: [idEmbed] });
         return;
       }
