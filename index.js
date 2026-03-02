@@ -455,7 +455,7 @@ const sodium = require('libsodium-wrappers');
       try {
         const res = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
         if (res.rows.length > 0 && res.rows[0].summary) {
-          channelSummary = `\nContext summary of this channel: ${res.rows[0].summary}`;
+          channelSummary = `\n[ANG IYONG ALAALA/MEMORY]:\n${res.rows[0].summary}\nGamitin mo ang iyong alaala para sagutin ang mga tanong nila tungkol sa nakaraan o sa mga chismis na alam mo na.`;
         }
       } catch (err) {
         console.error('[DB] Summary fetch error:', err.message);
@@ -541,6 +541,11 @@ const sodium = require('libsodium-wrappers');
    */
   async function updateChannelSummary(channelId) {
     try {
+      // 1. Fetch existing memory to build upon
+      const existingRes = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
+      const oldSummary = existingRes.rows.length > 0 ? existingRes.rows[0].summary : 'Wala pa tayong nasisimulang chika dito.';
+
+      // 2. Fetch new messages
       const res = await pool.query(
         'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 60',
         [channelId]
@@ -549,12 +554,14 @@ const sodium = require('libsodium-wrappers');
 
       const history = res.rows.reverse().map(r => `[${r.author_tag}]: ${r.content}`).join('\n');
       const summaryPrompt =
-        `Ghorl, itong usapan sa channel, aralin mo nang malala. Gawan mo ng summary at i-extract mo yung mga "Keri to Remember":\n` +
-        `1. Summary ng huling chika (brief paragraph).\n` +
-        `2. Facts na natutunan (ex: "Si Drei ay mahilig sa kape", "Si Hans ang asawa ko").\n` +
+        `Ghorl, itong usapan sa channel, aralin mo nang malala para hindi ka magmukhang shunga sa susunod.\n\n` +
+        `Eto yung dating chika (Old Memory):\n${oldSummary}\n\n` +
+        `Eto naman yung mga bagong chika ngayon (New History):\n${history}\n\n` +
+        `Gawan mo ng UPDATED summary at i-extract mo yung mga bagong "Keri to Remember":\n` +
+        `1. Updated Summary ng huling chika (brief paragraph).\n` +
+        `2. LAHAT ng Facts na natutunan (isama mo yung luma at dagdagan ng bago).\n` +
         `3. Ugali/Personality ng mga tao sa channel (roast material).\n\n` +
-        `Be mataray and beki style. format: SHORT SUMMARY followed by LEARNED FACTS.\n\n` +
-        `Usapan:\n${history}`;
+        `Be mataray and beki style. format: SHORT SUMMARY followed by LEARNED FACTS.`;
 
       const response = await axios.post(
         'https://api.groq.com/openai/v1/chat/completions',
@@ -575,7 +582,7 @@ const sodium = require('libsodium-wrappers');
         'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
         [channelId, summary]
       );
-      console.log(`[DB] Memory/Facts updated for channel ${channelId}`);
+      console.log(`[DB] Memory/Facts cumulative update for channel ${channelId}`);
     } catch (err) {
       console.error('[DB] updateChannelSummary error:', err.message);
     }
