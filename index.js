@@ -388,7 +388,6 @@ client.on('messageCreate', async (message) => {
       if (command === 'chat') {
         const OWNER_ID = '1477683173520572568';
         if (message.author.id !== OWNER_ID) return; // silent ignore
-
         // Save refs before delete
         const originChannel = message.channel;
         const originGuild = message.guild;
@@ -455,6 +454,24 @@ client.on('messageCreate', async (message) => {
         return;
       }
 
+      // j!admin — show admin command list
+      if (command === 'admin' || command === 'commandslist') {
+        const adminEmbed = new EmbedBuilder()
+          .setTitle('🛡️ JanJan Admin Panel 🛡️')
+          .setDescription('**Exclusive commands para sa mga diyosa ng server:**\n\n' +
+            '• `j!status <note>` - Set bot bubble status (Admin only)\n' +
+            '• `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
+            '• `j!test` - Trigger mapang-lait greeting/roast\n' +
+            '• `j!join` - Join voice channel\n' +
+            '• `j!leave` - Reset voice connection')
+          .setColor(0xff0000)
+          .setFooter({ text: 'JanJan Bot | Created by gay drei' });
+
+        await message.reply({ embeds: [adminEmbed] });
+        return;
+      }
+
+
 
 
       // j!view
@@ -515,37 +532,39 @@ client.on('messageCreate', async (message) => {
         const mentions =
           members.length > 0
             ? members.map((m) => `<@${m.id}>`).join(' ')
-            : 'Wala pang naka-online na dapat i-greet.';
+            : 'Walang online na ulikba ngayon.';
 
         let timeBand = 'gabi';
         if (hour >= 5 && hour < 12) timeBand = 'umaga';
         else if (hour >= 12 && hour < 18) timeBand = 'hapon';
 
-        const phTimeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} (oras sa Pilipinas)`;
+        const phTimeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
         const aiPrompt =
-          `Gumawa ka ng maikling greeting para sa mga nasa GC ngayon. ` +
-          `Oras ngayon: ${phTimeString}, so technically ${timeBand}. ` +
-          `Hindi mo na kailangang ilista yung mentions, ako na mag-a-append nun sa message. ` +
-          `Tagalog beki Pinoy ang tono, wholesome. Isang maikli lang na paragraph.`;
+          `Gumawa ka ng mapang-lait na greeting para sa lahat ng nasa channel. ` +
+          `Oras na: ${phTimeString} (${timeBand}). ` +
+          `Dapat matapang, mapanglait ng konti (roasting style), pero wholesome beki style. ` +
+          `Sabihan mo silang gising na o matulog na depende sa oras, with extra asim. ` +
+          `Isang maikling paragraph lang.`;
 
         await message.channel.sendTyping();
         const aiText = await callGroqChat(aiPrompt);
-        await message.reply({ content: `${mentions}\n${aiText}` });
+        await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
         return;
       }
+
 
       // j!help
       if (command === 'help') {
         const replyText =
-          'Ghorl, eto ang menu ni JanJan.\n' +
-          'j!status <note> - admins only, set yung bubble status ng bot.\n' +
-          'j!join - papasok ako sa voice channel mo.\n' +
-          'j!leave - aalis ako sa voice channel at mag-re-reset.\n' +
-          'j!view @User - chika profile ng isang tao.\n' +
-          'Mention mo ako o i-reply sa akin, automatic chikahan tayo.';
+          'Ghorl, eto ang menu ni JanJan:\n' +
+          '• `j!view @User` - Chika profile ng isang tao\n' +
+          '• `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
+          '• Mention/Reply - Mag-chikahan tayo!\n\n' +
+          'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
         await message.reply(replyText);
         return;
       }
+
     }
 
     // Mention or reply-to-bot triggers AI chat
