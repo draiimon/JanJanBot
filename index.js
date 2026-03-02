@@ -520,720 +520,726 @@ const sodium = require('libsodium-wrappers');
           content: row.author_id === client.user.id ? row.content : `[${row.author_tag}]: ${row.content}`
         }));
       } catch (err) {
-        console.error('[DB] History fetch error:', err.message);
-      }
-    }
-
-    // ============================================================
-    // STEP 1: BACKEND THINKING & REAL-TIME LEARNING
-    // ============================================================
-    let internalThoughts = '';
-    try {
-      const thinkingPayload = {
-        model: 'llama-3.1-8b-instant',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Ikaw ay ang internal reasoning engine ni JanJan. ' +
-              'Ang task mo ay i-analyze ang usapan, ang channel memory, at ang user facts. ' +
-              'DAPAT MONG MATANDAAN ang lahat ng sinasabi ng user (names, preferences, chismis). ' +
-              'Alamin mo rin kung sino ang mga kasama mo sa Voice Channel para mabanggit mo sila.' +
-              'Format your response as:\n' +
-              'PLAN: (Your internal thought on how to reply mataray/sassy)\n' +
-              'LEARNED_FACTS: (Direct facts you learned about the user in this message only)'
-          },
-          {
-            role: 'user',
-            content:
-              `Context Memory: ${channelSummary}\n` +
-              `User Facts: ${userFacts}\n` +
-              `Voice Members: ${voiceMembers.join(', ')}\n` +
-              `Latest History: ${JSON.stringify(historyMessages)}\n` +
-              `Current User Message: ${userMessage}`
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 300
-      };
-
-      const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
-        headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
-      });
-      const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
-
-      // Parse Plan and Facts
-      const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=LEARNED_FACTS:|$)/i);
-      const factsMatch = reasoningText.match(/LEARNED_FACTS:\s*([\s\S]*)/i);
-
-      internalThoughts = planMatch ? planMatch[1].trim() : reasoningText;
-      const newFacts = factsMatch ? factsMatch[1].trim() : '';
-
-      if (newFacts && authorId && !newFacts.toLowerCase().includes('wala')) {
-        try {
-          // Add to user memory immediately
-          const oldUserRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [authorId]);
-          const oldFacts = oldUserRes.rows.length > 0 ? oldUserRes.rows[0].facts : '';
-          const combinedFacts = oldFacts ? `${oldFacts} | ${newFacts}` : newFacts;
-
-          await pool.query(
-            'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
-            'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
-            [authorId, combinedFacts]
-          );
-          console.log(`[REAL-TIME LEARNING] Instant fact learned for user ${authorId}: ${newFacts}`);
-        } catch (dbErr) {
-          console.error('[DB] Real-time learning save error:', dbErr.message);
-        }
       }
 
-      console.log(`[THINKING] JanJan's internal plan: ${internalThoughts}`);
-    } catch (err) {
-      console.error('[THINKING] Error in reasoning step:', err.message);
-    }
-
-    // ============================================================
-    // STEP 2: FINAL RESPONSE GENERATION
-    // ============================================================
-    try {
-      const chatMessages = [
-        { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN]: ${internalThoughts}` : '') },
-        ...historyMessages,
-        { role: 'user', content: userMessage }
-      ];
-
-      const response = await axios.post(
-        apiUrl,
-        {
-          model: 'llama-3.3-70b-versatile',
-          messages: chatMessages,
-          temperature: 0.85,
-          max_tokens: 300
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      const choice = response.data.choices && response.data.choices[0];
-      if (!choice || !choice.message || !choice.message.content) {
-        console.error('Groq response missing choices:', response.data);
-        return 'Ay wait lang ghorl, nagloko utak ko sandali. Try mo ulit.';
-      }
-
-      return choice.message.content.trim();
-    } catch (err) {
-      console.error('Error calling Groq:', err.response ? err.response.data : err.message);
-      return 'Ay naku mare, may drama sa system. Subukan natin ulit mamaya.';
-    }
-  }
-
-  /**
-   * Summarize channel history to keep memory compact and "learn" things
-   */
-  async function updateChannelSummary(channelId) {
-    try {
-      // 1. Fetch existing channel memory
-      const existingRes = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
-      const oldSummary = existingRes.rows.length > 0 ? existingRes.rows[0].summary : 'Wala pa tayong nasisimulang chika dito.';
-
-      // 2. Fetch recent messages
-      const res = await pool.query(
-        'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 60',
-        [channelId]
-      );
-      if (res.rows.length < 10) return;
-
-      const history = res.rows.reverse().map(r => `[ID:${r.author_id}] ${r.author_tag}: ${r.content}`).join('\n');
-      const summaryPrompt =
-        `Ghorl, itong usapan sa channel, aralin mo nang malala para hindi ka magmukhang shunga sa susunod.\n\n` +
-        `Eto yung dating chika (Old Memory):\n${oldSummary}\n\n` +
-        `Eto naman yung mga bagong chika ngayon (New History):\n${history}\n\n` +
-        `Gawan mo ng dalawang bagay:\n` +
-        `1. UPDATED CHANNEL SUMMARY (brief paragraph of what happened recently + combined previous summary).\n` +
-        `2. USER-SPECIFIC FACTS (extract special facts per user ID, ex: "USER_ID: facts..."). Isama ang personality o mga preferrence nila.\n\n` +
-        `Format your response as:\n` +
-        `CHANNEL_SUMMARY: (summary text)\n` +
-        `USER_FACTS: (ID: facts... ID: facts...)`;
-
-      const response = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        {
+      // ============================================================
+      // STEP 1: BACKEND THINKING & UNIVERSAL REAL-TIME LEARNING
+      // ============================================================
+      let internalThoughts = '';
+      try {
+        const thinkingPayload = {
           model: 'llama-3.1-8b-instant',
           messages: [
-            { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
-            { role: 'user', content: summaryPrompt }
+            {
+              role: 'system',
+              content:
+                'Ikaw ay ang internal reasoning engine ni JanJan. ' +
+                'Ang task mo ay i-analyze ang usapan, ang channel memory, at ang user facts. ' +
+                'DAPAT MONG MATANDAAN ang lahat ng sinasabi ng LAHAT ng user (names, preferences, chismis). ' +
+                'Alamin mo rin kung sino ang mga kasama mo sa Voice Channel para mabanggit mo sila.' +
+                'Format your response as:\n' +
+                'PLAN: (Your internal thought on how to reply mataray/sassy)\n' +
+                'UNIVERSAL_LEARNING: (Extract NEW facts for any user ID in the context. Format: ID: fact | ID: fact...)'
+            },
+            {
+              role: 'user',
+              content:
+                `Context Memory: ${channelSummary}\n` +
+                `User Facts: ${userFacts}\n` +
+                `Voice Members: ${voiceMembers.join(', ')}\n` +
+                `Latest History: ${JSON.stringify(historyMessages)}\n` +
+                `Current User Message: ${userMessage} (ID: ${authorId})`
+            }
           ],
-          temperature: 0.3
-        },
-        { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-      );
+          temperature: 0.3,
+          max_tokens: 400
+        };
 
-      const aiResult = response.data.choices[0].message.content.trim();
+        const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
+          headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
+        });
+        const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
 
-      // Parse AI response
-      const summaryMatch = aiResult.match(/CHANNEL_SUMMARY:\s*([\s\S]*?)(?=USER_FACTS:|$)/i);
-      const userFactsMatch = aiResult.match(/USER_FACTS:\s*([\s\S]*)/i);
+        // Parse Plan and Universal Learning
+        const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=UNIVERSAL_LEARNING:|$)/i);
+        const learningMatch = reasoningText.match(/UNIVERSAL_LEARNING:\s*([\s\S]*)/i);
 
-      if (summaryMatch) {
-        const newSummary = summaryMatch[1].trim();
-        await pool.query(
-          'INSERT INTO channel_memory (channel_id, summary, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
-          'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
-          [channelId, newSummary]
-        );
-      }
+        internalThoughts = planMatch ? planMatch[1].trim() : reasoningText;
+        const universalLearning = learningMatch ? learningMatch[1].trim() : '';
 
-      if (userFactsMatch) {
-        const factsText = userFactsMatch[1].trim();
-        const userFactLines = factsText.split('\n');
-        for (const line of userFactLines) {
-          const match = line.match(/(\d+):\s*(.*)/);
-          if (match) {
-            const userId = match[1];
-            const fact = match[2];
-            // Cumulative user update
-            const oldUserRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
-            const oldFacts = oldUserRes.rows.length > 0 ? oldUserRes.rows[0].facts : '';
-            const combinedFacts = oldFacts ? `${oldFacts} | ${fact}` : fact;
-
-            await pool.query(
-              'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
-              'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
-              [userId, combinedFacts]
-            );
-          }
-        }
-      }
-
-      console.log(`[DB] Learning complete for channel ${channelId}`);
-    } catch (err) {
-      console.error('[DB] updateChannelSummary/Learning error:', err.message);
-    }
-  }
-
-  client.on('messageCreate', async (message) => {
-    try {
-      if (message.author.bot) return;
-
-      // Save message to DB regardless of AI trigger
-      try {
-        await pool.query(
-          'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
-          [
-            message.guild?.id || 'DM',
-            message.channel.id,
-            message.author.id,
-            message.author.tag,
-            message.content || ''
-          ]
-        );
-
-        // Auto trigger summary every 20 messages in that channel
-        const countRes = await pool.query('SELECT COUNT(*) FROM messages WHERE channel_id = $1', [message.channel.id]);
-        const msgCount = parseInt(countRes.rows[0].count);
-        if (msgCount % 20 === 0) {
-          updateChannelSummary(message.channel.id);
-        }
-      } catch (dbErr) {
-        console.error('[DB] Message save error:', dbErr.message);
-      }
-
-      const me = client.user;
-      if (!me) return;
-
-      const rawContent = message.content || '';
-      const prefix = 'j!';
-
-      if (rawContent.startsWith(prefix)) {
-        const args = rawContent.slice(prefix.length).trim().split(/\s+/);
-        const command = (args.shift() || '').toLowerCase();
-
-        // j!status
-        if (command === 'status') {
-          if (!message.guild) {
-            await message.reply('Ghorl, yung status na yan pang-server lang, hindi pang-DM.');
-            return;
-          }
-          const member = message.member;
-          if (!member || !member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            await message.reply('Admins lang ang pwedeng mag-set ng bubble status dito, ghorl.');
-            return;
-          }
-          const note = args.join(' ').trim();
-          if (!note) {
-            await message.reply('Lagyan mo ng laman yung status mo, mare. Halimbawa: j!status CEO ng chismis');
-            return;
-          }
-          const key = `${message.guild.id}:${member.id}`;
-          userCustomStatus.set(key, note);
-          await setBotCustomStatus(note);
-          await message.reply(`Sige, bubble status natin ngayon: ${note}. Updated na.`);
-          return;
-        }
-
-        // j!join
-        if (command === 'join') {
-          if (!message.guild) {
-            await message.reply('Kailangan nasa server ka para pwede ako sumali sa voice channel.');
-            return;
-          }
-
-          let member;
-          try {
-            member = await message.guild.members.fetch(message.author.id);
-          } catch {
-            member = message.member;
-          }
-
-          const voiceChannel = member && member.voice && member.voice.channel
-            ? member.voice.channel
-            : null;
-
-          if (!voiceChannel) {
-            await message.reply('Sumali ka muna sa isang voice channel, tapos tawagin mo ko ulit, ghorl.');
-            return;
-          }
-
-          const existing = getVoiceConnection(message.guild.id);
-          if (existing) {
-            if (existing.joinConfig.channelId === voiceChannel.id) {
-              await message.reply('Nasa call na kita ghorl, nandito na ako.');
-              return;
-            } else {
-              try { existing.destroy(); } catch { }
-            }
-          }
-
-          savedVoiceState = { channelId: voiceChannel.id, guildId: voiceChannel.guild.id };
-          joinAndWatch(voiceChannel.id, voiceChannel.guild.id, voiceChannel.guild.voiceAdapterCreator);
-
-          await message.reply(`O ayan, pumasok na ako sa ${voiceChannel.name}. Nandito na ako, ghorl.`);
-          return;
-        }
-
-        // j!leave
-        if (command === 'leave') {
-          if (!message.guild) {
-            await message.reply('Wala naman tayong server dito, ghorl.');
-            return;
-          }
-          const connection = getVoiceConnection(message.guild.id);
-          if (!connection) {
-            await message.reply('Wala naman ako sa kahit anong voice channel ngayon, mare.');
-            return;
-          }
-          savedVoiceState = null;
-          connection.destroy();
-          await message.reply('Umalis na ako sa voice channel. Tawagin mo ulit kapag kailangan mo ko.');
-          return;
-        }
-
-        // j!vc <message> — Text-to-speech in voice channel
-        if (command === 'vc' || command === 'speak' || command === 'tts') {
-          if (!message.guild) return;
-          const text = args.join(' ').trim();
-          if (!text) {
-            await message.reply('Loka, ano namang sasabihin ko? Bigyan mo ko ng text.');
-            return;
-          }
-
-          const member = message.member;
-          if (!member || !member.voice.channel) {
-            await message.reply('Sumali ka muna sa voice bago mo ko pagalitain, mare!');
-            return;
-          }
-
-          // Join if needed
-          const connection = getVoiceConnection(message.guild.id);
-          if (!connection) {
-            joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
-          }
-
-          await speakMessage(message.guild.id, text);
-          await message.react('🔊').catch(() => { });
-          return;
-        }
-
-        // j!autotts — Toggle auto tts in current channel
-        if (command === 'autotts') {
-          if (!message.guild || !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply('Admins lang ang bida-bida dito, ghorl.');
-          }
-
-          const guildId = message.guild.id;
-          const channelId = message.channel.id;
-
-          if (!autoTtsChannels.has(guildId)) autoTtsChannels.set(guildId, new Set());
-          const channels = autoTtsChannels.get(guildId);
-
-          if (channels.has(channelId)) {
-            channels.delete(channelId);
-            await message.reply(`❌ **AUTO TTS DISABLED** na para sa channel na to, sis.`);
-          } else {
-            channels.add(channelId);
-            await message.reply(`🔊 **AUTO TTS ENABLED**! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).`);
-          }
-          return;
-        }
-
-        // j!ask <question> — Voice-only AI response
-        if (command === 'ask') {
-          if (!message.guild) return;
-          const question = args.join(' ').trim();
-          if (!question) {
-            await message.reply('Ano ngang tatanungin mo, ghorl? Lagyan mo ng chika.');
-            return;
-          }
-
-          const member = message.member;
-          if (!member || !member.voice.channel) {
-            await message.reply('Doon ka sa voice channel magtanong para marinig mo boses ko, loka!');
-            return;
-          }
-
-          // Join if needed
-          const connection = getVoiceConnection(message.guild.id);
-          if (!connection) {
-            joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
-          }
-
-          await message.channel.sendTyping();
-
-          let voiceMembers = [];
-          const myVoiceChannel = message.guild.members.me.voice.channel;
-          if (myVoiceChannel) {
-            voiceMembers = myVoiceChannel.members
-              .filter(m => !m.user.bot)
-              .map(m => m.displayName || m.user.username);
-          }
-
-          const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
-
-          await speakMessage(message.guild.id, aiResponse);
-          await message.react('🤖').catch(() => { });
-          return;
-        }
-
-        // j!chat — owner only. Mirrors g!g from gnslgbot2.
-        // j!chat <channel_id or message_id> <text>
-        if (command === 'chat') {
-          const OWNERS = ['1477683173520572568', '705770837399306332'];
-          const originChannel = message.channel;
-          const originGuild = message.guild;
-          const authorUser = message.author;
-
-          // Verify owner ID or Administrator perm
-          const isOwner = OWNERS.includes(message.author.id);
-          const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
-
-          if (!isOwner && !isAdmin) return; // Silent ignore for non-admins
-
-          const targetId = args.shift();
-          const customMessage = args.join(' ').trim();
-
-          // Delete the command message for stealth
-          await message.delete().catch(() => { });
-
-          if (!targetId || !customMessage) {
-            try {
-              await authorUser.send(`j!chat: Kulang ang info, beshie! Format: j!chat <id> <message>\nID na binigay mo: ${targetId || 'wala'}\nMessage: ${customMessage || 'wala'}`);
-            } catch { }
-            return;
-          }
-
-          // 1. Try as a channel ID
-          let targetChannel = client.channels.cache.get(targetId) || null;
-          if (targetChannel && !targetChannel.isTextBased()) targetChannel = null;
-
-          if (!targetChannel) {
-            try {
-              const fetched = await client.channels.fetch(targetId).catch(() => null);
-              if (fetched && fetched.isTextBased()) targetChannel = fetched;
-            } catch { }
-          }
-
-          if (targetChannel) {
-            try {
-              await targetChannel.send(customMessage);
-              await authorUser.send(`✅ Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
-            } catch (e) {
-              try { await authorUser.send(`❌ Failed to send: ${e.message}`); } catch { }
-            }
-            return;
-          }
-
-          // 2. Try as a message ID (reply mode)
-          let targetMessage = null;
-          try { targetMessage = await originChannel.messages.fetch(targetId).catch(() => null); } catch { }
-
-          if (!targetMessage && originGuild) {
-            // If not in current channel, try cached channels in the same guild
-            for (const ch of originGuild.channels.cache.values()) {
-              if (!ch.isTextBased() || targetMessage) continue;
+        if (universalLearning && !universalLearning.toLowerCase().includes('wala')) {
+          // Handle multiple users in universal learning (Format: ID: fact | ID: fact)
+          const entries = universalLearning.split('|');
+          for (const entry of entries) {
+            const match = entry.match(/(\d+):\s*(.*)/);
+            if (match) {
+              const uId = match[1].trim();
+              const uFact = match[2].trim();
               try {
-                targetMessage = await ch.messages.fetch(targetId).catch(() => null);
-              } catch { }
+                const oldURes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [uId]);
+                const oldUFacts = oldURes.rows.length > 0 ? oldURes.rows[0].facts : '';
+                const combinedUFacts = oldUFacts ? `${oldUFacts} | ${uFact}` : uFact;
+
+                await pool.query(
+                  'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+                  'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+                  [uId, combinedUFacts]
+                );
+                console.log(`[UNIVERSAL LEARNING] Fact learned for ID ${uId}: ${uFact}`);
+              } catch (dbErr) {
+                console.error('[DB] Universal learning save error:', dbErr.message);
+              }
             }
           }
-
-          if (targetMessage) {
-            try {
-              await targetMessage.reply(customMessage);
-              await authorUser.send(`✅ Replied in #${targetMessage.channel.name}.`);
-            } catch (e) {
-              try { await authorUser.send(`❌ Failed to reply: ${e.message}`); } catch { }
-            }
-            return;
-          }
-
-          // 3. Fallback: ID not found
-          try {
-            await authorUser.send(`❌ j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
-          } catch { }
-          return;
         }
 
-        // j!whoami — Verify user ID for permissions
-        if (command === 'whoami' || command === 'myid') {
-          const owners = ['1477683173520572568', '705770837399306332'];
-          const isOwner = owners.includes(message.author.id);
-          const idEmbed = new EmbedBuilder()
-            .setTitle('🆔 Identity Check')
-            .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? '✅ You are an **Authorized Owner**.' : '❌ You are not in the owner whitelist.'}`)
-            .setColor(isOwner ? 0x00ff00 : 0xff0000);
-          await message.reply({ embeds: [idEmbed] });
-          return;
-        }
+        console.log(`[THINKING] JanJan's internal plan: ${internalThoughts}`);
+      } catch (err) {
+        console.error('[THINKING] Error in reasoning step:', err.message);
+      }
 
-        // j!ping — Bot status check
-        if (command === 'ping') {
-          await message.reply(`Pong! 🏓 Latency is ${Math.round(client.ws.ping)}ms.`);
-          return;
-        }
+      // ============================================================
+      // STEP 2: FINAL RESPONSE GENERATION
+      // ============================================================
+      try {
+        const chatMessages = [
+          { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN]: ${internalThoughts}` : '') },
+          ...historyMessages,
+          { role: 'user', content: userMessage }
+        ];
 
-        // j!admin — show admin command list
-        if (command === 'admin' || command === 'commandslist') {
-          const adminEmbed = new EmbedBuilder()
-            .setTitle('🛡️ JanJan Admin Panel 🛡️')
-            .setDescription('**Exclusive commands para sa mga diyosa ng server:**\n\n' +
-              '• `j!status <note>` - Set bot bubble status (Admin only)\n' +
-              '• `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
-              '• `j!test` - Trigger mapang-lait greeting/roast\n' +
-              '• `j!vc <text>` - Male TTS in voice channel\n' +
-              '• `j!ask <question>` - Voice-only AI response\n' +
-              '• `j!autotts` - Toggle Auto TTS in channel\n' +
-              '• `j!join` / `j!leave` - Reset voice connection')
-            .setColor(0xff0000)
-            .setFooter({ text: 'JanJan Bot | Created by gay drei' });
-
-          await message.reply({ embeds: [adminEmbed] });
-          return;
-        }
-
-
-
-
-        // j!view
-        if (command === 'view') {
-          const targetMember =
-            message.mentions.members && message.mentions.members.first()
-              ? message.mentions.members.first()
-              : message.member;
-
-          if (!targetMember) {
-            await message.reply('Loka-loka, wala akong ma-view na tao. I-mention mo kung sino titignan natin.');
-            return;
-          }
-
-          const presence = targetMember.presence;
-          const status = presence && presence.status ? presence.status : 'offline';
-
-          let prettyStatus = 'offline';
-          if (status === 'online') prettyStatus = 'online, ready for chika';
-          else if (status === 'idle') prettyStatus = 'idle, baka nagkakape lang';
-          else if (status === 'dnd') prettyStatus = 'do not disturb, wag muna guluhin';
-
-          const displayName = targetMember.displayName || targetMember.user.username;
-          const user = targetMember.user || targetMember;
-          const avatarUrl = user.displayAvatarURL ? user.displayAvatarURL({ size: 512 }) : null;
-
-          const descriptionLines = [
-            `Eto na si ${displayName}, isa sa mga certified characters ng server na to.`,
-            `Status ngayon: ${prettyStatus}.`
-          ];
-
-          if (message.guild) {
-            const key = `${message.guild.id}:${user.id}`;
-            if (userCustomStatus.has(key)) {
-              const note = userCustomStatus.get(key);
-              descriptionLines.push(`Bubble status niya dito: ${note}.`);
+        const response = await axios.post(
+          apiUrl,
+          {
+            model: 'llama-3.3-70b-versatile',
+            messages: chatMessages,
+            temperature: 0.85,
+            max_tokens: 300
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
             }
           }
+        );
 
-          const embed = new EmbedBuilder()
-            .setTitle(`Chika profile ni ${displayName}`)
-            .setDescription(descriptionLines.join('\n'))
-            .setColor(0xff66cc);
-
-          if (avatarUrl) embed.setImage(avatarUrl);
-
-          await message.reply({ embeds: [embed] });
-          return;
+        const choice = response.data.choices && response.data.choices[0];
+        if (!choice || !choice.message || !choice.message.content) {
+          console.error('Groq response missing choices:', response.data);
+          return 'Ay wait lang ghorl, nagloko utak ko sandali. Try mo ulit.';
         }
 
-        // j!test
-        if (command === 'test') {
-          const now = getNowInPhilippines();
-          const hour = now.getHours();
-          const minute = now.getMinutes();
-          const channel = message.channel;
-          const members = message.guild ? await collectActiveMembersForChannel(channel) : [];
-          const mentions =
-            members.length > 0
-              ? members.map((m) => `<@${m.id}>`).join(' ')
-              : 'Walang online na ulikba ngayon.';
+        return choice.message.content.trim();
+      } catch (err) {
+        console.error('Error calling Groq:', err.response ? err.response.data : err.message);
+        return 'Ay naku mare, may drama sa system. Subukan natin ulit mamaya.';
+      }
+    }
 
-          let timeBand = 'gabi';
-          if (hour >= 5 && hour < 12) timeBand = 'umaga';
-          else if (hour >= 12 && hour < 18) timeBand = 'hapon';
+    /**
+     * Summarize channel history to keep memory compact and "learn" things
+     */
+    async function updateChannelSummary(channelId) {
+      try {
+        // 1. Fetch existing channel memory
+        const existingRes = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
+        const oldSummary = existingRes.rows.length > 0 ? existingRes.rows[0].summary : 'Wala pa tayong nasisimulang chika dito.';
 
-          const phTimeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-          const aiPrompt =
-            `Gumawa ka ng mapang-lait na greeting para sa lahat ng nasa channel. ` +
-            `Oras na: ${phTimeString} (${timeBand}). ` +
-            `Dapat matapang, mapanglait ng konti (roasting style), pero wholesome beki style. ` +
-            `Sabihan mo silang gising na o matulog na depende sa oras, with extra asim. ` +
-            `Isang maikling paragraph lang.`;
+        // 2. Fetch recent messages
+        const res = await pool.query(
+          'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 60',
+          [channelId]
+        );
+        if (res.rows.length < 10) return;
 
-          await message.channel.sendTyping();
+        const history = res.rows.reverse().map(r => `[ID:${r.author_id}] ${r.author_tag}: ${r.content}`).join('\n');
+        const summaryPrompt =
+          `Ghorl, itong usapan sa channel, aralin mo nang malala para hindi ka magmukhang shunga sa susunod.\n\n` +
+          `Eto yung dating chika (Old Memory):\n${oldSummary}\n\n` +
+          `Eto naman yung mga bagong chika ngayon (New History):\n${history}\n\n` +
+          `Gawan mo ng dalawang bagay:\n` +
+          `1. UPDATED CHANNEL SUMMARY (brief paragraph of what happened recently + combined previous summary).\n` +
+          `2. USER-SPECIFIC FACTS (extract special facts per user ID, ex: "USER_ID: facts..."). Isama ang personality o mga preferrence nila.\n\n` +
+          `Format your response as:\n` +
+          `CHANNEL_SUMMARY: (summary text)\n` +
+          `USER_FACTS: (ID: facts... ID: facts...)`;
 
-          let voiceMembers = [];
-          if (message.guild) {
-            const myVC = message.guild.members.me.voice.channel;
-            if (myVC) {
-              voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+        const response = await axios.post(
+          'https://api.groq.com/openai/v1/chat/completions',
+          {
+            model: 'llama-3.1-8b-instant',
+            messages: [
+              { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
+              { role: 'user', content: summaryPrompt }
+            ],
+            temperature: 0.3
+          },
+          { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
+        );
+
+        const aiResult = response.data.choices[0].message.content.trim();
+
+        // Parse AI response
+        const summaryMatch = aiResult.match(/CHANNEL_SUMMARY:\s*([\s\S]*?)(?=USER_FACTS:|$)/i);
+        const userFactsMatch = aiResult.match(/USER_FACTS:\s*([\s\S]*)/i);
+
+        if (summaryMatch) {
+          const newSummary = summaryMatch[1].trim();
+          await pool.query(
+            'INSERT INTO channel_memory (channel_id, summary, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+            'ON CONFLICT (channel_id) DO UPDATE SET summary = $2, updated_at = CURRENT_TIMESTAMP',
+            [channelId, newSummary]
+          );
+        }
+
+        if (userFactsMatch) {
+          const factsText = userFactsMatch[1].trim();
+          const userFactLines = factsText.split('\n');
+          for (const line of userFactLines) {
+            const match = line.match(/(\d+):\s*(.*)/);
+            if (match) {
+              const userId = match[1];
+              const fact = match[2];
+              // Cumulative user update
+              const oldUserRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
+              const oldFacts = oldUserRes.rows.length > 0 ? oldUserRes.rows[0].facts : '';
+              const combinedFacts = oldFacts ? `${oldFacts} | ${fact}` : fact;
+
+              await pool.query(
+                'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+                'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+                [userId, combinedFacts]
+              );
             }
           }
-
-          const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
-          await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
-
-          // Speak the roast if in voice
-          if (message.guild && getVoiceConnection(message.guild.id)) {
-            speakMessage(message.guild.id, aiText);
-          }
-          return;
         }
 
-
-        // j!help
-        if (command === 'help') {
-          const replyText =
-            'Ghorl, eto ang menu ni JanJan:\n' +
-            '• `j!view @User` - Chika profile ng isang tao\n' +
-            '• `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
-            '• Mention/Reply - Mag-chikahan tayo!\n\n' +
-            'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
-          await message.reply(replyText);
-          return;
-        }
-
+        console.log(`[DB] Learning complete for channel ${channelId}`);
+      } catch (err) {
+        console.error('[DB] updateChannelSummary/Learning error:', err.message);
       }
+    }
 
-      // Mention or reply-to-bot triggers AI chat
-      const isMention = message.mentions.has(me);
+    client.on('messageCreate', async (message) => {
+      try {
+        if (message.author.bot) return;
 
-      let isReplyToBot = false;
-      if (message.reference && message.reference.messageId) {
-        try {
-          const referenced = await message.fetchReference();
-          if (referenced.author && referenced.author.id === me.id) {
-            isReplyToBot = true;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      if (!isMention && !isReplyToBot) {
-        // Auto TTS check
-        if (message.guild && autoTtsChannels.has(message.guild.id)) {
-          const channels = autoTtsChannels.get(message.guild.id);
-          if (channels.has(message.channel.id) && message.content && !message.content.startsWith(prefix)) {
-            // Speak the message autotts style
-            const ttsText = `${message.member?.displayName || message.author.username} says: ${message.content}`;
-            speakMessage(message.guild.id, ttsText);
-          }
-        }
-        return;
-      }
-
-      let content = message.content || '';
-      if (isMention) {
-        content = content
-          .replaceAll(`<@${me.id}>`, '')
-          .replaceAll(`<@!${me.id}>`, '')
-          .trim();
-      }
-
-      if (!content) {
-        content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
-      }
-
-      await message.channel.sendTyping();
-
-      let voiceMembers = [];
-      if (message.guild) {
-        const myVC = message.guild.members.me.voice.channel;
-        if (myVC) {
-          voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
-        }
-      }
-
-      const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers);
-
-      if (reply && reply.length > 0) {
-        const sentMessage = await message.reply(reply);
-        // Save the bot's reply to DB so it remembers what it said
+        // Save message to DB regardless of AI trigger
         try {
           await pool.query(
             'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
             [
               message.guild?.id || 'DM',
               message.channel.id,
-              client.user.id,
-              client.user.tag,
-              reply
+              message.author.id,
+              message.author.tag,
+              message.content || ''
             ]
           );
+
+          // Auto trigger summary every 20 messages in that channel
+          const countRes = await pool.query('SELECT COUNT(*) FROM messages WHERE channel_id = $1', [message.channel.id]);
+          const msgCount = parseInt(countRes.rows[0].count);
+          if (msgCount % 20 === 0) {
+            updateChannelSummary(message.channel.id);
+          }
         } catch (dbErr) {
-          console.error('[DB] Bot reply save error:', dbErr.message);
+          console.error('[DB] Message save error:', dbErr.message);
         }
+
+        const me = client.user;
+        if (!me) return;
+
+        const rawContent = message.content || '';
+        const prefix = 'j!';
+
+        if (rawContent.startsWith(prefix)) {
+          const args = rawContent.slice(prefix.length).trim().split(/\s+/);
+          const command = (args.shift() || '').toLowerCase();
+
+          // j!status
+          if (command === 'status') {
+            if (!message.guild) {
+              await message.reply('Ghorl, yung status na yan pang-server lang, hindi pang-DM.');
+              return;
+            }
+            const member = message.member;
+            if (!member || !member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+              await message.reply('Admins lang ang pwedeng mag-set ng bubble status dito, ghorl.');
+              return;
+            }
+            const note = args.join(' ').trim();
+            if (!note) {
+              await message.reply('Lagyan mo ng laman yung status mo, mare. Halimbawa: j!status CEO ng chismis');
+              return;
+            }
+            const key = `${message.guild.id}:${member.id}`;
+            userCustomStatus.set(key, note);
+            await setBotCustomStatus(note);
+            await message.reply(`Sige, bubble status natin ngayon: ${note}. Updated na.`);
+            return;
+          }
+
+          // j!join
+          if (command === 'join') {
+            if (!message.guild) {
+              await message.reply('Kailangan nasa server ka para pwede ako sumali sa voice channel.');
+              return;
+            }
+
+            let member;
+            try {
+              member = await message.guild.members.fetch(message.author.id);
+            } catch {
+              member = message.member;
+            }
+
+            const voiceChannel = member && member.voice && member.voice.channel
+              ? member.voice.channel
+              : null;
+
+            if (!voiceChannel) {
+              await message.reply('Sumali ka muna sa isang voice channel, tapos tawagin mo ko ulit, ghorl.');
+              return;
+            }
+
+            const existing = getVoiceConnection(message.guild.id);
+            if (existing) {
+              if (existing.joinConfig.channelId === voiceChannel.id) {
+                await message.reply('Nasa call na kita ghorl, nandito na ako.');
+                return;
+              } else {
+                try { existing.destroy(); } catch { }
+              }
+            }
+
+            savedVoiceState = { channelId: voiceChannel.id, guildId: voiceChannel.guild.id };
+            joinAndWatch(voiceChannel.id, voiceChannel.guild.id, voiceChannel.guild.voiceAdapterCreator);
+
+            await message.reply(`O ayan, pumasok na ako sa ${voiceChannel.name}. Nandito na ako, ghorl.`);
+            return;
+          }
+
+          // j!leave
+          if (command === 'leave') {
+            if (!message.guild) {
+              await message.reply('Wala naman tayong server dito, ghorl.');
+              return;
+            }
+            const connection = getVoiceConnection(message.guild.id);
+            if (!connection) {
+              await message.reply('Wala naman ako sa kahit anong voice channel ngayon, mare.');
+              return;
+            }
+            savedVoiceState = null;
+            connection.destroy();
+            await message.reply('Umalis na ako sa voice channel. Tawagin mo ulit kapag kailangan mo ko.');
+            return;
+          }
+
+          // j!vc <message> — Text-to-speech in voice channel
+          if (command === 'vc' || command === 'speak' || command === 'tts') {
+            if (!message.guild) return;
+            const text = args.join(' ').trim();
+            if (!text) {
+              await message.reply('Loka, ano namang sasabihin ko? Bigyan mo ko ng text.');
+              return;
+            }
+
+            const member = message.member;
+            if (!member || !member.voice.channel) {
+              await message.reply('Sumali ka muna sa voice bago mo ko pagalitain, mare!');
+              return;
+            }
+
+            // Join if needed
+            const connection = getVoiceConnection(message.guild.id);
+            if (!connection) {
+              joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+            }
+
+            await speakMessage(message.guild.id, text);
+            await message.react('🔊').catch(() => { });
+            return;
+          }
+
+          // j!autotts — Toggle auto tts in current channel
+          if (command === 'autotts') {
+            if (!message.guild || !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+              return message.reply('Admins lang ang bida-bida dito, ghorl.');
+            }
+
+            const guildId = message.guild.id;
+            const channelId = message.channel.id;
+
+            if (!autoTtsChannels.has(guildId)) autoTtsChannels.set(guildId, new Set());
+            const channels = autoTtsChannels.get(guildId);
+
+            if (channels.has(channelId)) {
+              channels.delete(channelId);
+              await message.reply(`❌ **AUTO TTS DISABLED** na para sa channel na to, sis.`);
+            } else {
+              channels.add(channelId);
+              await message.reply(`🔊 **AUTO TTS ENABLED**! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).`);
+            }
+            return;
+          }
+
+          // j!ask <question> — Voice-only AI response
+          if (command === 'ask') {
+            if (!message.guild) return;
+            const question = args.join(' ').trim();
+            if (!question) {
+              await message.reply('Ano ngang tatanungin mo, ghorl? Lagyan mo ng chika.');
+              return;
+            }
+
+            const member = message.member;
+            if (!member || !member.voice.channel) {
+              await message.reply('Doon ka sa voice channel magtanong para marinig mo boses ko, loka!');
+              return;
+            }
+
+            // Join if needed
+            const connection = getVoiceConnection(message.guild.id);
+            if (!connection) {
+              joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+            }
+
+            await message.channel.sendTyping();
+
+            let voiceMembers = [];
+            const myVoiceChannel = message.guild.members.me.voice.channel;
+            if (myVoiceChannel) {
+              voiceMembers = myVoiceChannel.members
+                .filter(m => !m.user.bot)
+                .map(m => m.displayName || m.user.username);
+            }
+
+            const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
+
+            await speakMessage(message.guild.id, aiResponse);
+            await message.react('🤖').catch(() => { });
+            return;
+          }
+
+          // j!chat — owner only. Mirrors g!g from gnslgbot2.
+          // j!chat <channel_id or message_id> <text>
+          if (command === 'chat') {
+            const OWNERS = ['1477683173520572568', '705770837399306332'];
+            const originChannel = message.channel;
+            const originGuild = message.guild;
+            const authorUser = message.author;
+
+            // Verify owner ID or Administrator perm
+            const isOwner = OWNERS.includes(message.author.id);
+            const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+
+            if (!isOwner && !isAdmin) return; // Silent ignore for non-admins
+
+            const targetId = args.shift();
+            const customMessage = args.join(' ').trim();
+
+            // Delete the command message for stealth
+            await message.delete().catch(() => { });
+
+            if (!targetId || !customMessage) {
+              try {
+                await authorUser.send(`j!chat: Kulang ang info, beshie! Format: j!chat <id> <message>\nID na binigay mo: ${targetId || 'wala'}\nMessage: ${customMessage || 'wala'}`);
+              } catch { }
+              return;
+            }
+
+            // 1. Try as a channel ID
+            let targetChannel = client.channels.cache.get(targetId) || null;
+            if (targetChannel && !targetChannel.isTextBased()) targetChannel = null;
+
+            if (!targetChannel) {
+              try {
+                const fetched = await client.channels.fetch(targetId).catch(() => null);
+                if (fetched && fetched.isTextBased()) targetChannel = fetched;
+              } catch { }
+            }
+
+            if (targetChannel) {
+              try {
+                await targetChannel.send(customMessage);
+                await authorUser.send(`✅ Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
+              } catch (e) {
+                try { await authorUser.send(`❌ Failed to send: ${e.message}`); } catch { }
+              }
+              return;
+            }
+
+            // 2. Try as a message ID (reply mode)
+            let targetMessage = null;
+            try { targetMessage = await originChannel.messages.fetch(targetId).catch(() => null); } catch { }
+
+            if (!targetMessage && originGuild) {
+              // If not in current channel, try cached channels in the same guild
+              for (const ch of originGuild.channels.cache.values()) {
+                if (!ch.isTextBased() || targetMessage) continue;
+                try {
+                  targetMessage = await ch.messages.fetch(targetId).catch(() => null);
+                } catch { }
+              }
+            }
+
+            if (targetMessage) {
+              try {
+                await targetMessage.reply(customMessage);
+                await authorUser.send(`✅ Replied in #${targetMessage.channel.name}.`);
+              } catch (e) {
+                try { await authorUser.send(`❌ Failed to reply: ${e.message}`); } catch { }
+              }
+              return;
+            }
+
+            // 3. Fallback: ID not found
+            try {
+              await authorUser.send(`❌ j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
+            } catch { }
+            return;
+          }
+
+          // j!whoami — Verify user ID for permissions
+          if (command === 'whoami' || command === 'myid') {
+            const owners = ['1477683173520572568', '705770837399306332'];
+            const isOwner = owners.includes(message.author.id);
+            const idEmbed = new EmbedBuilder()
+              .setTitle('🆔 Identity Check')
+              .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? '✅ You are an **Authorized Owner**.' : '❌ You are not in the owner whitelist.'}`)
+              .setColor(isOwner ? 0x00ff00 : 0xff0000);
+            await message.reply({ embeds: [idEmbed] });
+            return;
+          }
+
+          // j!ping — Bot status check
+          if (command === 'ping') {
+            await message.reply(`Pong! 🏓 Latency is ${Math.round(client.ws.ping)}ms.`);
+            return;
+          }
+
+          // j!admin — show admin command list
+          if (command === 'admin' || command === 'commandslist') {
+            const adminEmbed = new EmbedBuilder()
+              .setTitle('🛡️ JanJan Admin Panel 🛡️')
+              .setDescription('**Exclusive commands para sa mga diyosa ng server:**\n\n' +
+                '• `j!status <note>` - Set bot bubble status (Admin only)\n' +
+                '• `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
+                '• `j!test` - Trigger mapang-lait greeting/roast\n' +
+                '• `j!vc <text>` - Male TTS in voice channel\n' +
+                '• `j!ask <question>` - Voice-only AI response\n' +
+                '• `j!autotts` - Toggle Auto TTS in channel\n' +
+                '• `j!join` / `j!leave` - Reset voice connection')
+              .setColor(0xff0000)
+              .setFooter({ text: 'JanJan Bot | Created by gay drei' });
+
+            await message.reply({ embeds: [adminEmbed] });
+            return;
+          }
+
+
+
+
+          // j!view
+          if (command === 'view') {
+            const targetMember =
+              message.mentions.members && message.mentions.members.first()
+                ? message.mentions.members.first()
+                : message.member;
+
+            if (!targetMember) {
+              await message.reply('Loka-loka, wala akong ma-view na tao. I-mention mo kung sino titignan natin.');
+              return;
+            }
+
+            const presence = targetMember.presence;
+            const status = presence && presence.status ? presence.status : 'offline';
+
+            let prettyStatus = 'offline';
+            if (status === 'online') prettyStatus = 'online, ready for chika';
+            else if (status === 'idle') prettyStatus = 'idle, baka nagkakape lang';
+            else if (status === 'dnd') prettyStatus = 'do not disturb, wag muna guluhin';
+
+            const displayName = targetMember.displayName || targetMember.user.username;
+            const user = targetMember.user || targetMember;
+            const avatarUrl = user.displayAvatarURL ? user.displayAvatarURL({ size: 512 }) : null;
+
+            const descriptionLines = [
+              `Eto na si ${displayName}, isa sa mga certified characters ng server na to.`,
+              `Status ngayon: ${prettyStatus}.`
+            ];
+
+            if (message.guild) {
+              const key = `${message.guild.id}:${user.id}`;
+              if (userCustomStatus.has(key)) {
+                const note = userCustomStatus.get(key);
+                descriptionLines.push(`Bubble status niya dito: ${note}.`);
+              }
+            }
+
+            const embed = new EmbedBuilder()
+              .setTitle(`Chika profile ni ${displayName}`)
+              .setDescription(descriptionLines.join('\n'))
+              .setColor(0xff66cc);
+
+            if (avatarUrl) embed.setImage(avatarUrl);
+
+            await message.reply({ embeds: [embed] });
+            return;
+          }
+
+          // j!test
+          if (command === 'test') {
+            const now = getNowInPhilippines();
+            const hour = now.getHours();
+            const minute = now.getMinutes();
+            const channel = message.channel;
+            const members = message.guild ? await collectActiveMembersForChannel(channel) : [];
+            const mentions =
+              members.length > 0
+                ? members.map((m) => `<@${m.id}>`).join(' ')
+                : 'Walang online na ulikba ngayon.';
+
+            let timeBand = 'gabi';
+            if (hour >= 5 && hour < 12) timeBand = 'umaga';
+            else if (hour >= 12 && hour < 18) timeBand = 'hapon';
+
+            const phTimeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+            const aiPrompt =
+              `Gumawa ka ng mapang-lait na greeting para sa lahat ng nasa channel. ` +
+              `Oras na: ${phTimeString} (${timeBand}). ` +
+              `Dapat matapang, mapanglait ng konti (roasting style), pero wholesome beki style. ` +
+              `Sabihan mo silang gising na o matulog na depende sa oras, with extra asim. ` +
+              `Isang maikling paragraph lang.`;
+
+            await message.channel.sendTyping();
+
+            let voiceMembers = [];
+            if (message.guild) {
+              const myVC = message.guild.members.me.voice.channel;
+              if (myVC) {
+                voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+              }
+            }
+
+            const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
+            await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
+
+            // Speak the roast if in voice
+            if (message.guild && getVoiceConnection(message.guild.id)) {
+              speakMessage(message.guild.id, aiText);
+            }
+            return;
+          }
+
+
+          // j!help
+          if (command === 'help') {
+            const replyText =
+              'Ghorl, eto ang menu ni JanJan:\n' +
+              '• `j!view @User` - Chika profile ng isang tao\n' +
+              '• `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
+              '• Mention/Reply - Mag-chikahan tayo!\n\n' +
+              'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
+            await message.reply(replyText);
+            return;
+          }
+
+        }
+
+        // Mention or reply-to-bot triggers AI chat
+        const isMention = message.mentions.has(me);
+
+        let isReplyToBot = false;
+        if (message.reference && message.reference.messageId) {
+          try {
+            const referenced = await message.fetchReference();
+            if (referenced.author && referenced.author.id === me.id) {
+              isReplyToBot = true;
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (!isMention && !isReplyToBot) {
+          // Auto TTS check
+          if (message.guild && autoTtsChannels.has(message.guild.id)) {
+            const channels = autoTtsChannels.get(message.guild.id);
+            if (channels.has(message.channel.id) && message.content && !message.content.startsWith(prefix)) {
+              // Speak the message autotts style
+              const ttsText = `${message.member?.displayName || message.author.username} says: ${message.content}`;
+              speakMessage(message.guild.id, ttsText);
+            }
+          }
+          return;
+        }
+
+        let content = message.content || '';
+        if (isMention) {
+          content = content
+            .replaceAll(`<@${me.id}>`, '')
+            .replaceAll(`<@!${me.id}>`, '')
+            .trim();
+        }
+
+        if (!content) {
+          content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
+        }
+
+        await message.channel.sendTyping();
+
+        let voiceMembers = [];
+        if (message.guild) {
+          const myVC = message.guild.members.me.voice.channel;
+          if (myVC) {
+            voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+          }
+        }
+
+        const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers);
+
+        if (reply && reply.length > 0) {
+          const sentMessage = await message.reply(reply);
+          // Save the bot's reply to DB so it remembers what it said
+          try {
+            await pool.query(
+              'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+              [
+                message.guild?.id || 'DM',
+                message.channel.id,
+                client.user.id,
+                client.user.tag,
+                reply
+              ]
+            );
+          } catch (dbErr) {
+            console.error('[DB] Bot reply save error:', dbErr.message);
+          }
+        }
+      } catch (err) {
+        console.error('Error handling messageCreate:', err);
       }
-    } catch (err) {
-      console.error('Error handling messageCreate:', err);
-    }
-  });
+    });
 
-  // Login AFTER sodium is ready and events are registered
-  client.login(DISCORD_TOKEN).catch((err) => {
-    console.error('Failed to login to Discord:', err.message);
-    process.exit(1);
-  });
+    // Login AFTER sodium is ready and events are registered
+    client.login(DISCORD_TOKEN).catch((err) => {
+      console.error('Failed to login to Discord:', err.message);
+      process.exit(1);
+    });
 
-  // Minimal HTTP server so Render sees a healthy app
-  const PORT = process.env.PORT || 3000;
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('JanJan Discord bot is running.\n');
-  });
+    // Minimal HTTP server so Render sees a healthy app
+    const PORT = process.env.PORT || 3000;
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('JanJan Discord bot is running.\n');
+    });
 
-  server.listen(PORT, () => {
-    console.log(`HTTP status server listening on port ${PORT}`);
-  });
+    server.listen(PORT, () => {
+      console.log(`HTTP status server listening on port ${PORT}`);
+    });
 
-})(); // End of async IIFE
+  }) (); // End of async IIFE
