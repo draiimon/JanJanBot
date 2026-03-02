@@ -431,7 +431,7 @@ const sodium = require('libsodium-wrappers');
     }, 60 * 1000);
   }
 
-  async function callGroqChat(userMessage, authorId = null, channelId = null) {
+  async function callGroqChat(userMessage, authorId = null, channelId = null, voiceMembers = []) {
     const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
     let behaviorPrompt = '';
@@ -453,6 +453,11 @@ const sodium = require('libsodium-wrappers');
         'IMPORTANT: Kapag nabanggit ang "Hans" o mamention ang ID na "669047995009859604", magpaka-flirty ka na asawa mo yan. ' +
         'Protektahan mo ang asawa mo! Sabihin mo: "Asawa ko yan? Bakit aagawin mo ba?" o katulad nyan. Maging mataray at selosa ka sa asawa mo.';
     }
+
+    // Voice context
+    const voiceContext = voiceMembers.length > 0
+      ? `\n[MGA KASAMA MO SA VOICE CHANNEL NGAYON]: ${voiceMembers.join(', ')}. Pwede mo silang i-mention o i-roast kung gusto mo.`
+      : '';
 
     // Fetch channel summary/context if exists
     let channelSummary = '';
@@ -490,6 +495,7 @@ const sodium = require('libsodium-wrappers');
       behaviorPrompt +
       channelSummary +
       userFacts +
+      voiceContext +
       '\nGamitin mo ang iyong mga alaala para sagutin ang mga tanong nila tungkol sa nakaraan o sa mga chismis na alam mo na. ' +
       'HUWAG NA HUWAG KANG GAGAMIT NG FIXED NA LINYA O TEMPLATE. Maging natural ka at spontaneous. ' +
       'Ang boses mo ay mataray na may sipon, yung parang laging naiirita pero nakikipag-chikahan pa rin. ' +
@@ -532,6 +538,7 @@ const sodium = require('libsodium-wrappers');
               'Ikaw ay ang internal reasoning engine ni JanJan. ' +
               'Ang task mo ay i-analyze ang usapan, ang channel memory, at ang user facts. ' +
               'DAPAT MONG MATANDAAN ang lahat ng sinasabi ng user (names, preferences, chismis). ' +
+              'Alamin mo rin kung sino ang mga kasama mo sa Voice Channel para mabanggit mo sila.' +
               'Format your response as:\n' +
               'PLAN: (Your internal thought on how to reply mataray/sassy)\n' +
               'LEARNED_FACTS: (Direct facts you learned about the user in this message only)'
@@ -541,6 +548,7 @@ const sodium = require('libsodium-wrappers');
             content:
               `Context Memory: ${channelSummary}\n` +
               `User Facts: ${userFacts}\n` +
+              `Voice Members: ${voiceMembers.join(', ')}\n` +
               `Latest History: ${JSON.stringify(historyMessages)}\n` +
               `Current User Message: ${userMessage}`
           }
@@ -894,7 +902,16 @@ const sodium = require('libsodium-wrappers');
           }
 
           await message.channel.sendTyping();
-          const aiResponse = await callGroqChat(question, message.author.id, message.channel.id);
+
+          let voiceMembers = [];
+          const myVoiceChannel = message.guild.members.me.voice.channel;
+          if (myVoiceChannel) {
+            voiceMembers = myVoiceChannel.members
+              .filter(m => !m.user.bot)
+              .map(m => m.displayName || m.user.username);
+          }
+
+          const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
 
           await speakMessage(message.guild.id, aiResponse);
           await message.react('🤖').catch(() => { });
@@ -1093,7 +1110,16 @@ const sodium = require('libsodium-wrappers');
             `Isang maikling paragraph lang.`;
 
           await message.channel.sendTyping();
-          const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id);
+
+          let voiceMembers = [];
+          if (message.guild) {
+            const myVC = message.guild.members.me.voice.channel;
+            if (myVC) {
+              voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+            }
+          }
+
+          const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
           await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
 
           // Speak the roast if in voice
@@ -1159,7 +1185,16 @@ const sodium = require('libsodium-wrappers');
       }
 
       await message.channel.sendTyping();
-      const reply = await callGroqChat(content, message.author.id, message.channel.id);
+
+      let voiceMembers = [];
+      if (message.guild) {
+        const myVC = message.guild.members.me.voice.channel;
+        if (myVC) {
+          voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+        }
+      }
+
+      const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers);
 
       if (reply && reply.length > 0) {
         const sentMessage = await message.reply(reply);
