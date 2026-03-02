@@ -407,20 +407,33 @@ const {
             end: { behavior: EndBehaviorType.AfterSilence, duration: 800 }
           });
 
+          // Track raw bytes to diagnose DAVE/Discord audio delivery issues
+          let rawBytes = 0;
+          audioStream.on('data', (chunk) => {
+            rawBytes += chunk.length;
+          });
+
           const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
           const chunks = [];
 
           audioStream.pipe(decoder);
           decoder.on('data', ch => chunks.push(ch));
 
+          // 30-second safety timeout — if no audio arrives, destroy and retry
+          const streamTimeout = setTimeout(() => {
+            console.log(`[STT] 30s timeout — raw bytes received: ${rawBytes}. Resubscribing.`);
+            try { audioStream.destroy(); } catch { }
+          }, 30000);
+
           await new Promise(resolve => {
-            decoder.on('end', resolve);
-            decoder.on('error', resolve);
-            audioStream.on('error', resolve);
+            decoder.on('end', () => { clearTimeout(streamTimeout); resolve(); });
+            decoder.on('error', () => { clearTimeout(streamTimeout); resolve(); });
+            audioStream.on('error', () => { clearTimeout(streamTimeout); resolve(); });
+            audioStream.on('close', () => { clearTimeout(streamTimeout); resolve(); });
           });
 
           const pcm = Buffer.concat(chunks);
-          console.log(`[STT] Got ${pcm.length} bytes of audio`);
+          console.log(`[STT] Stream ended — raw opus: ${rawBytes}B, decoded PCM: ${pcm.length}B`);
 
           // gnslgbot2: skip if < 96000 bytes (~1 second of audio)
           if (pcm.length < 96000) {
@@ -530,7 +543,8 @@ const {
       channelId,
       guildId,
       adapterCreator,
-      selfDeaf: false
+      selfDeaf: false,
+      selfMute: false
     });
 
     // Log state changes
