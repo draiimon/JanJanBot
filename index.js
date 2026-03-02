@@ -11,13 +11,21 @@ const {
   joinVoiceChannel,
   getVoiceConnection,
   VoiceConnectionStatus,
-  entersState
+  entersState,
+  createAudioPlayer,
+  createAudioResource,
+  StreamType,
+  AudioPlayerStatus,
+  NoSubscriberBehavior
 } = require('@discordjs/voice');
 
 const dotenv = require('dotenv');
 const axios = require('axios');
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const { EdgeTTS } = require('edged-tts');
 
 // Load sodium FIRST before anything voice-related.
 // Without this, @discordjs/voice crashes with "No compatible encryption modes."
@@ -61,6 +69,50 @@ const client = new Client({
 
 // In-memory custom bubble status per user per guild
 const userCustomStatus = new Map();
+
+// Auto TTS channels per guild (Set of channel IDs)
+const autoTtsChannels = new Map();
+const audioPlayers = new Map();
+
+function getOrCreatePlayer(guildId) {
+  if (audioPlayers.has(guildId)) return audioPlayers.get(guildId);
+  const player = createAudioPlayer({
+    behaviors: { noSubscriber: NoSubscriberBehavior.Play }
+  });
+  audioPlayers.set(guildId, player);
+  return player;
+}
+
+/**
+ * Generate and speak a message in a voice channel
+ */
+async function speakMessage(guildId, text) {
+  const connection = getVoiceConnection(guildId);
+  if (!connection) return;
+
+  try {
+    const tts = new EdgeTTS();
+    const tempFile = path.join(__dirname, `tts_${guildId}_${Date.now()}.mp3`);
+
+    // fil-PH-AngeloNeural is the MALE voice requested by the user
+    await tts.ttsPromise(text, 'fil-PH-AngeloNeural');
+    fs.writeFileSync(tempFile, tts.audioData);
+
+    const resource = createAudioResource(tempFile, { inputType: StreamType.Arbitrary });
+    const player = getOrCreatePlayer(guildId);
+
+    connection.subscribe(player);
+    player.play(resource);
+
+    // Cleanup after finish
+    player.once(AudioPlayerStatus.Idle, () => {
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
+    });
+
+  } catch (e) {
+    console.error('speakMessage error:', e.message);
+  }
+}
 
 // Remember the last voice channel the bot was asked to join
 // so it can auto-rejoin after restart
@@ -383,6 +435,83 @@ client.on('messageCreate', async (message) => {
         return;
       }
 
+      // j!vc <message> — Text-to-speech in voice channel
+      if (command === 'vc' || command === 'speak' || command === 'tts') {
+        if (!message.guild) return;
+        const text = args.join(' ').trim();
+        if (!text) {
+          await message.reply('Loka, ano namang sasabihin ko? Bigyan mo ko ng text.');
+          return;
+        }
+
+        const member = message.member;
+        if (!member || !member.voice.channel) {
+          await message.reply('Sumali ka muna sa voice bago mo ko pagalitain, mare!');
+          return;
+        }
+
+        // Join if needed
+        const connection = getVoiceConnection(message.guild.id);
+        if (!connection) {
+          joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+        }
+
+        await speakMessage(message.guild.id, text);
+        await message.react('🔊').catch(() => { });
+        return;
+      }
+
+      // j!autotts — Toggle auto tts in current channel
+      if (command === 'autotts') {
+        if (!message.guild || !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+          return message.reply('Admins lang ang bida-bida dito, ghorl.');
+        }
+
+        const guildId = message.guild.id;
+        const channelId = message.channel.id;
+
+        if (!autoTtsChannels.has(guildId)) autoTtsChannels.set(guildId, new Set());
+        const channels = autoTtsChannels.get(guildId);
+
+        if (channels.has(channelId)) {
+          channels.delete(channelId);
+          await message.reply(`❌ **AUTO TTS DISABLED** na para sa channel na to, sis.`);
+        } else {
+          channels.add(channelId);
+          await message.reply(`🔊 **AUTO TTS ENABLED**! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).`);
+        }
+        return;
+      }
+
+      // j!ask <question> — Voice-only AI response
+      if (command === 'ask') {
+        if (!message.guild) return;
+        const question = args.join(' ').trim();
+        if (!question) {
+          await message.reply('Ano ngang tatanungin mo, ghorl? Lagyan mo ng chika.');
+          return;
+        }
+
+        const member = message.member;
+        if (!member || !member.voice.channel) {
+          await message.reply('Doon ka sa voice channel magtanong para marinig mo boses ko, loka!');
+          return;
+        }
+
+        // Join if needed
+        const connection = getVoiceConnection(message.guild.id);
+        if (!connection) {
+          joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+        }
+
+        await message.channel.sendTyping();
+        const aiResponse = await callGroqChat(question);
+
+        await speakMessage(message.guild.id, aiResponse);
+        await message.react('🤖').catch(() => { });
+        return;
+      }
+
       // j!chat — owner only. Mirrors g!g from gnslgbot2.
       // j!chat <channel_id or message_id> <text>
       if (command === 'chat') {
@@ -488,8 +617,10 @@ client.on('messageCreate', async (message) => {
             '• `j!status <note>` - Set bot bubble status (Admin only)\n' +
             '• `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
             '• `j!test` - Trigger mapang-lait greeting/roast\n' +
-            '• `j!join` - Join voice channel\n' +
-            '• `j!leave` - Reset voice connection')
+            '• `j!vc <text>` - Male TTS in voice channel\n' +
+            '• `j!ask <question>` - Voice-only AI response\n' +
+            '• `j!autotts` - Toggle Auto TTS in channel\n' +
+            '• `j!join` / `j!leave` - Reset voice connection')
           .setColor(0xff0000)
           .setFooter({ text: 'JanJan Bot | Created by gay drei' });
 
@@ -575,6 +706,11 @@ client.on('messageCreate', async (message) => {
         await message.channel.sendTyping();
         const aiText = await callGroqChat(aiPrompt);
         await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
+
+        // Speak the roast if in voice
+        if (message.guild && getVoiceConnection(message.guild.id)) {
+          speakMessage(message.guild.id, aiText);
+        }
         return;
       }
 
@@ -608,7 +744,18 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    if (!isMention && !isReplyToBot) return;
+    if (!isMention && !isReplyToBot) {
+      // Auto TTS check
+      if (message.guild && autoTtsChannels.has(message.guild.id)) {
+        const channels = autoTtsChannels.get(message.guild.id);
+        if (channels.has(message.channel.id) && message.content && !message.content.startsWith(prefix)) {
+          // Speak the message autotts style
+          const ttsText = `${message.member?.displayName || message.author.username} says: ${message.content}`;
+          speakMessage(message.guild.id, ttsText);
+        }
+      }
+      return;
+    }
 
     let content = message.content || '';
     if (isMention) {

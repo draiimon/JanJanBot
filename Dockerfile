@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json* ./ 
 
+RUN apk add --no-cache ffmpeg
 RUN npm install --production
 
 COPY . .
