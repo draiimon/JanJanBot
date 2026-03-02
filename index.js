@@ -625,7 +625,11 @@ const sodium = require('libsodium-wrappers');
         }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
 
         const result = response.data.choices[0].message.content.trim();
-        if (result) return result;
+        if (result) {
+          // Clean up any <think> tags if the model outputs them
+          const cleanedResult = result.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+          return cleanedResult;
+        }
       } catch (err) {
         const isRateLimit = err.response && (err.response.status === 429 || err.response.data?.error?.code === 'rate_limit_exceeded');
         if (isRateLimit) {
