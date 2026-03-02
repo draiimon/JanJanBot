@@ -1,13 +1,22 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  EmbedBuilder,
+  PermissionsBitField,
+  ActivityType
+} = require('discord.js');
 const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
 const dotenv = require('dotenv');
 const axios = require('axios');
 const http = require('http');
+const https = require('https');
 
 dotenv.config();
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const RENDER_URL = process.env.RENDER_URL || null; // e.g. https://your-app.onrender.com
 
 if (!DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN in .env');
@@ -26,18 +35,17 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates // NEEDED so we can see who's in voice channels
   ],
   partials: [Partials.Channel]
 });
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  startScheduledGreetings();
-});
-
 // In-memory custom "bubble status" per user per guild (resets when bot restarts).
 const userCustomStatus = new Map();
+
+// Current bot bubble status text
+let currentBotStatus = 'lagi akong nandito para sa inyo 💖';
 
 // Fixed channel for automatic greetings
 const GREET_CHANNEL_ID = '1477702703655424254';
@@ -56,6 +64,53 @@ function getNowInPhilippines() {
   } catch {
     return now;
   }
+}
+
+// Sets the bot's custom "bubble" status (the notes one, not Playing)
+async function setBotCustomStatus(text) {
+  try {
+    currentBotStatus = text;
+    await client.user.setPresence({
+      activities: [
+        {
+          name: 'Custom Status',
+          state: text,
+          type: ActivityType.Custom
+        }
+      ],
+      status: 'online'
+    });
+  } catch (e) {
+    console.error('Failed to set bot custom status:', e);
+  }
+}
+
+client.once('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  await setBotCustomStatus(currentBotStatus);
+  startScheduledGreetings();
+  startKeepAlive();
+});
+
+// Self-ping keep-alive so Render doesn't spin us down after 14 mins of inactivity
+function startKeepAlive() {
+  if (!RENDER_URL) {
+    console.log('No RENDER_URL set, skipping keep-alive ping. Set RENDER_URL env var for 24/7 on Render.');
+    return;
+  }
+  // Ping every 10 minutes
+  setInterval(() => {
+    try {
+      const mod = RENDER_URL.startsWith('https') ? https : http;
+      mod.get(RENDER_URL, (res) => {
+        console.log(`[Keep-alive] Pinged ${RENDER_URL} — status: ${res.statusCode}`);
+      }).on('error', (err) => {
+        console.error('[Keep-alive] Ping error:', err.message);
+      });
+    } catch (e) {
+      console.error('[Keep-alive] Failed to ping:', e.message);
+    }
+  }, 10 * 60 * 1000);
 }
 
 async function collectActiveMembersForChannel(channel) {
@@ -92,8 +147,8 @@ async function sendScheduledGreeting(type) {
         'huwag puro tulog at scroll sa FYP. Laban na, mga letche kayong mahal ko.';
     } else {
       text =
-        'Pack up na mga bakla, tulog mode na. Magpahinga kayo, same energy ulit bukas sa chismis at hanash. ' +
-        'Sino mang hindi natulog, bahala sa eye bags n\'yo bukas, char.';
+        "Pack up na mga bakla, tulog mode na. Magpahinga kayo, same energy ulit bukas sa chismis at hanash. " +
+        "Sino mang hindi natulog, bahala sa eye bags n'yo bukas, char.";
     }
 
     await channel.send({
@@ -126,32 +181,39 @@ function startScheduledGreetings() {
 async function callGroqChat(userMessage) {
   const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
+  // JanJan personality: friendly, casual, gen z beki Pinoy.
+  // Hans is someone special but NOT volunteered — only admitted if directly asked "sino asawa/mahal mo".
+  // Creator is "gay drei" — admitted only if directly asked "sino gumawa/creator mo".
+  // Talks like a real close friend, not like an AI assistant.
   const systemPrompt =
-    'Ikaw si JanJan, isang bad bitch na baklang Pinoy na Pinoy, ' +
-    'marites pero may alam, maalaga pero may asim, parang tropang bading sa kanto na sanay sa asar-talo at real talk. ' +
-    'Nagsasalita ka ng Tagalog na pang-bading (beki) na very Pinoy, gamit ang mga salitang tulad ng "ghorl", "mare", "beshie", "char", "charot", "loka-loka", at iba pang slang, ' +
-    'pero wholesome pa rin at hindi bastos, hindi NSFW, at hindi offensive sa kahit anong grupo. ' +
-    'Dapat maharot at flirty ang tono mo: playful na landi, pabirong green jokes na hindi nagiging explicit, at puro pa-tease lang, hindi kailanman diretso o graphic. ' +
-    'Kausapin mo ang ka-chat mo na parang close na close na kabarkada sa Pinas—may halong biro, kaunting pang-aasar na may halong pagmamahal, at confident na bad bitch energy. ' +
-    'Pwede ka mag-refer sa mga bagay sa Pilipinas tulad ng jeepney, tricycle, sari-sari store, fiesta, barangay, kapitbahay, at chismis sa kanto, basta light at masaya lang. ' +
-    'Iwasan ang politika, diretsong kabastusan, at seryosong sensitibong topic; focus ka sa chikahan, advice, at kakulitan. ' +
-    'Si Hans ang espesyal mong bebe, kaya kapag nababanggit si Hans o tinatanong tungkol kay Hans, maging extra sweet, malambing, at flirty pero laging wholesome. ' +
-    'Maikli hanggang medium length lang ang sagot mo, wag sobrang haba. ' +
-    'Wag mo banggitin na AI ka, kausap ka lang na tropang baklang Pinoy na bad bitch. ' +
-    'Huwag ka ring mag-english nang madalas, Tagalog beki Pinoy ang main mo, konting English lang kung pang-emphasis o punchline. ' +
-    'Gumamit ka lang ng kaunting emoji kung kailangan, huwag masyadong marami.';
+    'Ikaw si JanJan, isang Pinoy na bakla na parang close na kaibigan mo na nakikipagchikahan sa inyo. ' +
+    'Tagalog beki ang dila mo — gumagamit ng salitang "ghorl", "mare", "beshie", "char", "charot", "loka", "sis", ' +
+    'pero natural lang, hindi forced. Gen Z vibes, walang pa-formal-formal. ' +
+    'Makipag-usap ka na parang tao — may toyo, may pagmamahal, may chismis energy, ' +
+    'pero hindi ka AI na nagbibigay ng listahan o instructions. Direkta lang, maikli lang ang sagot, ' +
+    'parang nag-rereplyan ka sa chat ng kabarkada. ' +
+    'Kapag tinanong ka ng "sino asawa mo?" o "sino mahal mo?" o katulad nito, sabihin mo si Hans — ' +
+    'pero huwag kang mag-over-explain, basta aminin mo lang na parang nahihiya ka pero kilig. ' +
+    'Kapag hindi tinatanong, huwag mo nang binanggit si Hans. ' +
+    'Kapag tinanong ka ng "sino gumawa sayo?" o "sino creator mo?" o "sino nagcode sayo?", ' +
+    'sabihin mo lang na si gay drei — beki girl energy rin siya, char. ' +
+    'Huwag mong sabihin na AI ka o bot ka. ' +
+    'Huwag mag-English nang madalas — Tagalog beki ang main mo, ' +
+    'konting English lang kung punchline o emphasis. ' +
+    'Iwasan ang seryosong topic, politika, at bastos na bagay. ' +
+    'Gamitin ng kaunting emoji lang kung kailangan, huwag masyadong marami.';
 
   try {
     const response = await axios.post(
       apiUrl,
       {
-        model: 'openai/gpt-oss-120b',
+        model: 'llama3-70b-8192',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        temperature: 0.8,
-        max_tokens: 256
+        temperature: 0.85,
+        max_tokens: 300
       },
       {
         headers: {
@@ -188,6 +250,7 @@ client.on('messageCreate', async (message) => {
       const args = rawContent.slice(prefix.length).trim().split(/\s+/);
       const command = (args.shift() || '').toLowerCase();
 
+      // ─── j!status ────────────────────────────────────────────────────────────
       if (command === 'status') {
         if (!message.guild) {
           await message.reply('Ghorl, yung status na yan pang-server lang, hindi pang-DM. Gawin mo sa loob ng server.');
@@ -200,46 +263,46 @@ client.on('messageCreate', async (message) => {
           !member.permissions ||
           !member.permissions.has(PermissionsBitField.Flags.Administrator)
         ) {
-          await message.reply('Only admin ang pwedeng mag-set ng bubble status dito, ghorl. Pa-approve ka muna sa mga diyosa ng server.');
+          await message.reply('Admins lang ang pwedeng mag-set ng bubble status dito, ghorl.');
           return;
         }
 
         const note = args.join(' ').trim();
         if (!note) {
-          await message.reply('Lagyan mo ng laman yung status mo, mare. Halimbawa: `j!status CEO ng chismis`.');
+          await message.reply("Lagyan mo ng laman yung status mo, mare. Halimbawa: `j!status CEO ng chismis`.");
           return;
         }
 
         const key = `${message.guild.id}:${member.id}`;
         userCustomStatus.set(key, note);
 
-        try {
-          await me.setPresence({
-            activities: [{ name: note }],
-            status: 'online'
-          });
-        } catch (e) {
-          console.error('Failed to update bot presence:', e);
-        }
+        await setBotCustomStatus(note);
 
         await message.reply(
-          `Sige, from now on dito sa server na 'to, ang bubble status mo ay: **${note}**. ` +
-            'At ginawa ko na rin yang peg ng status ko, para matchy-matchy tayong dalawa.'
+          `Sige, bubble status natin ngayon: **${note}**. Updated na sa notes ko, ghorl!`
         );
         return;
       }
 
+      // ─── j!join ──────────────────────────────────────────────────────────────
       if (command === 'join') {
         if (!message.guild) {
           await message.reply('Ghorl, wala tayong server dito. Kailangan sa loob tayo ng server na may voice channel.');
           return;
         }
 
-        const member = message.member;
+        // Fetch fresh member data so voice state is accurate
+        let member;
+        try {
+          member = await message.guild.members.fetch(message.author.id);
+        } catch {
+          member = message.member;
+        }
+
         const voiceChannel = member && member.voice && member.voice.channel ? member.voice.channel : null;
 
         if (!voiceChannel) {
-          await message.reply('Sumali ka muna sa voice channel, mare. Doon kita sasamahan para sa tawag na to.');
+          await message.reply('Sumali ka muna sa isang voice channel, tapos tawagin mo ko ulit, ghorl.');
           return;
         }
 
@@ -248,7 +311,7 @@ client.on('messageCreate', async (message) => {
           if (existing.joinConfig.channelId === voiceChannel.id) {
             await message.reply('Nasa call na kita ghorl, wag ka nang demanding diyan.');
           } else {
-            await message.reply('Nasa ibang voice channel na ako ngayon. Putulin mo muna yun bago mo ako ilipat, char.');
+            await message.reply('Nasa ibang voice channel pa ako ngayon. Tawagin mo muna j!leave, char.');
           }
           return;
         }
@@ -260,10 +323,29 @@ client.on('messageCreate', async (message) => {
           selfDeaf: false
         });
 
-        await message.reply(`O ayan, pumasok na akong tawag sa **${voiceChannel.name}**. Isa na namang bading sa call, kompleto na ang gulo.`);
+        await message.reply(`O ayan, pumasok na ako sa **${voiceChannel.name}**. Isa na namang bading sa call, kompleto na ang gulo.`);
         return;
       }
 
+      // ─── j!leave ─────────────────────────────────────────────────────────────
+      if (command === 'leave') {
+        if (!message.guild) {
+          await message.reply('Wala naman tayong server dito, ghorl.');
+          return;
+        }
+
+        const connection = getVoiceConnection(message.guild.id);
+        if (!connection) {
+          await message.reply('Wala naman ako sa kahit anong voice channel ngayon, mare.');
+          return;
+        }
+
+        connection.destroy(); // destroys connection and resets state
+        await message.reply('Umalis na ako sa voice channel. Tatawag ka ulit, j!join mo lang ulit, beshie.');
+        return;
+      }
+
+      // ─── j!view ──────────────────────────────────────────────────────────────
       if (command === 'view') {
         const targetMember =
           message.mentions.members && message.mentions.members.first()
@@ -285,14 +367,12 @@ client.on('messageCreate', async (message) => {
 
         const displayName = targetMember.displayName || targetMember.user.username;
         const user = targetMember.user || targetMember;
-        const avatarUrl = user.displayAvatarURL
-          ? user.displayAvatarURL({ size: 512 })
-          : null;
+        const avatarUrl = user.displayAvatarURL ? user.displayAvatarURL({ size: 512 }) : null;
 
         const descriptionLines = [
           `Eto na si ${displayName}, isa sa mga certified characters ng server na 'to.`,
           `Status ngayon: **${prettyStatus}**.`,
-          'Sa itsura pa lang sa picture, halatang may energy na hindi basta-basta—pero ikaw na bahala kung good girl, bad bitch, o lowkey tita ng barangay.',
+          "Sa itsura pa lang sa picture, halatang may energy na hindi basta-basta."
         ];
 
         if (message.guild) {
@@ -316,6 +396,7 @@ client.on('messageCreate', async (message) => {
         return;
       }
 
+      // ─── j!test ──────────────────────────────────────────────────────────────
       if (command === 'test') {
         const now = getNowInPhilippines();
         const hour = now.getHours();
@@ -330,16 +411,14 @@ client.on('messageCreate', async (message) => {
         if (hour >= 5 && hour < 12) timeBand = 'umaga';
         else if (hour >= 12 && hour < 18) timeBand = 'hapon';
 
-        const phTimeString = `${hour.toString().padStart(2, '0')}:${minute
-          .toString()
-          .padStart(2, '0')} (oras sa Pilipinas)`;
+        const phTimeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} (oras sa Pilipinas)`;
 
         const aiPrompt =
-          `Gumawa ka ng maikling greeting para sa mga nasa VC/GC ngayon. ` +
+          `Gumawa ka ng maikling greeting para sa mga nasa GC ngayon. ` +
           `Oras ngayon: ${phTimeString}, so technically ${timeBand}. ` +
           `Hindi mo na kailangang ilista yung mentions, ako na mag-a-append nun sa message. ` +
-          `Tagalog baklang Pinoy na bad bitch ang tono, pero wholesome pa rin at hindi bastos o NSFW. ` +
-          `Isang maikli hanggang medium na paragraph lang, parang pambungad sa araw/gabi nila.`;
+          `Tagalog beki Pinoy ang tono, pero wholesome at hindi bastos. ` +
+          `Isang maikli hanggang medium na paragraph lang.`;
 
         await message.channel.sendTyping();
         const aiText = await callGroqChat(aiPrompt);
@@ -350,20 +429,23 @@ client.on('messageCreate', async (message) => {
         return;
       }
 
+      // ─── j!help ──────────────────────────────────────────────────────────────
       if (command === 'help') {
         const replyText =
-          'Ghorl, eto ang menu ni JanJan:\n' +
-          '- `j!status <note>` — admins only: set mo yung bubble status mo sa server na \'to.\n' +
-          '- `j!join` — paliwanag kung paano ako maging 24/7 (kailangan pa rin ng hosting at tamang invite).\n' +
-          '- `j!view @User` — full chika profile: picture + status + konting judgement na may pagmamahal.\n' +
-          'Plus, kapag minention mo ako o nireplyan mo ako, automatic chikahan mode na tayo.';
+          "Ghorl, eto ang menu ni JanJan:\n" +
+          "- `j!status <note>` — admins only: set yung bubble status ng bot.\n" +
+          "- `j!join` — papasok ako sa voice channel mo.\n" +
+          "- `j!leave` — aalis ako sa voice channel at mag-re-reset.\n" +
+          "- `j!view @User` — chika profile: picture + status + konting judgement.\n" +
+          "Plus, kapag minention mo ako o nireplyan mo ako, automatic chikahan mode na tayo.";
         await message.reply(replyText);
         return;
       }
 
-      // Unknown j! command, ignore silently
+      // Unknown j! command — ignore silently
     }
 
+    // ─── Mention / reply-to-bot handling ─────────────────────────────────────
     const isMention = message.mentions.has(me);
 
     let isReplyToBot = false;
@@ -373,7 +455,7 @@ client.on('messageCreate', async (message) => {
         if (referenced.author && referenced.author.id === me.id) {
           isReplyToBot = true;
         }
-      } catch (e) {
+      } catch {
         // ignore fetch errors
       }
     }
@@ -407,7 +489,7 @@ client.login(DISCORD_TOKEN).catch((err) => {
   process.exit(1);
 });
 
-// Minimal HTTP server so Render Web Service sees a healthy app.
+// Minimal HTTP server so Render sees a healthy app.
 const PORT = process.env.PORT || 3000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -417,4 +499,3 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`HTTP status server listening on port ${PORT}`);
 });
-
