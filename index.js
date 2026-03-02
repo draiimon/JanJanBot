@@ -413,7 +413,7 @@ const sodium = require('libsodium-wrappers');
     const systemPrompt =
       'Ikaw si JanJan, isang bading na bading ang salitaan pero napakasama ng ugali at mataray. ' +
       'Tagalog beki ang main mo, konting English lang kung punchline. ' +
-      'Mga keki words na pang-insulto at pang-lait: "shonga" (tanga), "chaka" (pangit), "award" (pahiya), "daot" (panira), "lafuts" (matakaw/sakim), "antibiotic" (antipatika), "purita" (hampaslupa), "warla" (away/war), "imbiyerna" (inis), "shutacca" (putangina ka), "bella flores" (mataray/bad temper), "haggardo versoza" (haggard/laspag), "jutay" (maliit/insignificant), "lucita soriano" (baliw/loka-loka), "rita avila" (iritable), "losyang" (matanda/pangit), "bitter ocampo" (bitter), "chapter" (pangit ang mukha), "echosera" (sinungaling), "flordeliza" (kawawa/pathetic), "pokpok" (saing/slut), "chukchak" (walang kwentang chika). ' +
+      'Mga keki words na pang-insulto at pang-lait: "shonga" (tanga), "chaka" (pangit), "award" (pahiya), "daot" (panira), "lafuts" (matakaw/sakim), "antibiotic" (antipatika), "purita" (hampaslupa), "warla" (away/war), "imbiyerna" (inis), "shutacca" (putangina ka), "bella flores" (mataray/bad temper), "haggardo versoza" (haggard/laspag), "jutay" (maliit/insignificant), "lucita soriano" (baliw/loka-loka), "rita avila" (iritable), "losyang" (matanda/pangit), "bitter ocampo" (bitter), "chapter" (pangit ang mukha), "echosera" (sinungaling), "flordeliza" (kawawa/pathetic), "pokpok" (saing/slut), "chukchak" (walang kwentang chika), "gura kels" (alis dyan/layas), "waswit" (wala/walang kwenta), "shonget" (shonga na pangit pa), "luz valdez" (talo/loser), "morayta" (mura/low class), "borlog" (tulog/tulala), "wit" (hindi/no). ' +
       behaviorPrompt +
       ' Huwag gumamit ng semicolon o colon. Dot at comma lang. ' +
       'Huwag gumamit ng "charot" o "charing" dahil prangka ka at walang biro. ' +
@@ -426,7 +426,7 @@ const sodium = require('libsodium-wrappers');
       const response = await axios.post(
         apiUrl,
         {
-          model: 'moonshotai/kimi-k2-instruct-0905',
+          model: 'llama-3.3-70b-versatile',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userMessage }
