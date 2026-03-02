@@ -126,6 +126,10 @@ const sodium = require('libsodium-wrappers');
   const autoTtsChannels = new Map();
   const audioPlayers = new Map();
 
+  // Spam prevention for AI triggers (to save Groq tokens)
+  const aiUserCooldowns = new Map();
+  const aiChannelCooldowns = new Map();
+
   function getOrCreatePlayer(guildId) {
     if (audioPlayers.has(guildId)) return audioPlayers.get(guildId);
     const player = createAudioPlayer({
@@ -1177,6 +1181,31 @@ const sodium = require('libsodium-wrappers');
         }
         return;
       }
+
+      // --- AI SPAM PROTECTION ---
+      const now = Date.now();
+      const USER_COOLDOWN = 15000; // 15 seconds per user
+      const CHANNEL_COOLDOWN = 8000; // 8 seconds per channel
+
+      const lastUserTime = aiUserCooldowns.get(message.author.id) || 0;
+      const lastChannelTime = aiChannelCooldowns.get(message.channel.id) || 0;
+
+      if (now - lastUserTime < USER_COOLDOWN || now - lastChannelTime < CHANNEL_COOLDOWN) {
+        // Use a static funny response if spamming to save tokens
+        const spamLait = [
+          'Hangu muna ghorl, masyado kang papansin! Wait ka lang muna, uminom ka ng antibiotic.',
+          'Wait lang mare, nagpapahinga ang utak ko sa dami niyo hanash. 10 seconds break please!',
+          'Hayaan mo muna akong huminga, teh. Busy pa ang lola mo sa iba. Charot!',
+          'Stop muna dyan ghorl, mabilis lang. Chill ka lang muna dyan sa gilid.'
+        ];
+        const randomSpam = spamLait[Math.floor(Math.random() * spamLait.length)];
+        await message.reply(`${randomSpam} (Note: Spam protection triggered, save Groq tokens ghorl!)`);
+        return;
+      }
+
+      // Set new cooldowns
+      aiUserCooldowns.set(message.author.id, now);
+      aiChannelCooldowns.set(message.channel.id, now);
 
       let content = message.content || '';
       if (isMention) {
