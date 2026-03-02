@@ -521,6 +521,8 @@ const sodium = require('libsodium-wrappers');
       'meta-llama/llama-4-scout-17b-16e-i',
       'qwen/qwen3-32b',
       'moonshotai/kimi-k2-instruct-0905',
+      'groq/compound',
+      'groq/compound-mini',
       'llama-3.1-8b-instant'
     ];
 
@@ -624,22 +626,35 @@ const sodium = require('libsodium-wrappers');
           max_tokens: 200
         }, { headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } });
 
-        const result = response.data.choices[0].message.content.trim();
-        if (result) {
-          // Aggressively clean up all versions of <think> tags
-          let cleanedResult = result.replace(/<think>[\s\S]*?<\/think>/gi, '');
-          cleanedResult = cleanedResult.replace(/<think>[\s\S]*/gi, ''); // Remove unclosed tags till end
-          cleanedResult = cleanedResult.replace(/<\/think>/gi, '');     // Remove stray closing tags
-          return cleanedResult.trim();
+        const rawResult = response.data.choices[0].message.content.trim();
+        if (rawResult) {
+          // NUCLEAR CLEANER: Remove all forms of thinking tags and reasoning leaks
+          let cleaned = rawResult
+            .replace(/<[^>]*?think[^>]*?>[\s\S]*?<\/[^>]*?think[^>]*?>/gi, '') // Advanced tag strip
+            .replace(/<[^>]*?think[^>]*?>[\s\S]*/gi, '')                      // Unclosed tag strip
+            .replace(/<\/?[^>]*?think[^>]*?>/gi, '')                         // Stray tag strip
+            .replace(/\(Thinking:[\s\S]*?\)/gi, '')
+            .replace(/^Okay, (let me|let's) (think|see|analyze)[\s\S]*?(\n\n|\.\s+|$)/i, '')
+            .replace(/^Thinking Process:[\s\S]*?(\n\n|$)/gi, '');
+
+          const finalResult = cleaned.trim();
+          console.log(`[CLEANER] Raw: ${rawResult.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
+
+          // If after cleaning we have nothing, this model only gave us thoughts. TRY NEXT MODEL.
+          if (!finalResult || finalResult.length < 2) {
+            console.warn(`[GROQ] Model ${currentModel} purely internal. Skipping...`);
+            continue;
+          }
+
+          return finalResult;
         }
       } catch (err) {
         const isRateLimit = err.response && (err.response.status === 429 || err.response.data?.error?.code === 'rate_limit_exceeded');
         if (isRateLimit) {
-          console.warn(`[GROQ] Model ${currentModel} rate limited. Trying next model...`);
-          continue; // Try next model in list
+          console.warn(`[GROQ] Model ${currentModel} rate limited. Trying next...`);
+          continue;
         } else {
           console.error(`[GROQ] Error with model ${currentModel}:`, err.message);
-          // For non-rate limit errors, we still try next model just in case
           continue;
         }
       }
