@@ -1570,6 +1570,60 @@ const {
     }
   });
 
+  // =====================================================================
+  // VOICE STATE UPDATE — same as gnslgbot2's on_voice_state_update
+  // Announces when someone joins or leaves the bot's voice channel
+  // =====================================================================
+  client.on('voiceStateUpdate', async (oldState, newState) => {
+    try {
+      const member = newState.member || oldState.member;
+      if (!member || member.user.bot) return; // Ignore bots
+
+      const guildId = newState.guild.id;
+      const connection = getVoiceConnection(guildId);
+      if (!connection) return; // Bot not in voice, ignore
+
+      const botVC = newState.guild.members.me?.voice?.channel;
+      if (!botVC) return;
+
+      const displayName = member.displayName || member.user.username;
+
+      const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
+      const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
+
+      if (joinedBotVC) {
+        // === USER JOINED BOT'S VC ===
+        const joinMessages = [
+          `Ayan na ang baklang ulikba na si ${displayName}! O ayan, pumasok na ang legend!`,
+          `Hala! Nandito na si ${displayName}! Tangina ka, late ka pa!`,
+          `Ay, si ${displayName} pala yun! Handa ka na bang maging bida, ghorl?`,
+          `Nag-join na si ${displayName}! Welcome sa call, bakla ka!`,
+          `Putangina, nandito na si ${displayName}! Handa na ba kayong maingay?`,
+          `Ayan na si ${displayName}! Ang tagal mo naman, inaaabangan ka na namin!`,
+        ];
+        const msg = joinMessages[Math.floor(Math.random() * joinMessages.length)];
+        console.log(`[VOICE STATE] ${displayName} joined → saying: "${msg}"`);
+        speakMessage(guildId, msg);
+
+      } else if (leftBotVC) {
+        // === USER LEFT BOT'S VC — backstab time! ===
+        const leaveMessages = [
+          `Umalis na si ${displayName}! Hmp! Pag wala na siya, pwede na tayong mag-backstab! ${displayName} kasi, plastic!`,
+          `Ay, nakiAalis na ang bruha na si ${displayName}! Bye! Wag ka nang bumalik, pangit!`,
+          `Ayun, tumakbo na si ${displayName}! Duwag! Pag wala siya mas masaya dito!`,
+          `Nag-leave na si ${displayName}! Salamat at umalis ka na, nakakainis ka naman!`,
+          `Hay, wala na si ${displayName}. Maayos na ang atmosphere. Toxic pala siya eh!`,
+          `Umalis na ang bakla na si ${displayName}! Pag wala siya mas masarap mag-backstab! Charot lang!`,
+        ];
+        const msg = leaveMessages[Math.floor(Math.random() * leaveMessages.length)];
+        console.log(`[VOICE STATE] ${displayName} left → saying: "${msg}"`);
+        speakMessage(guildId, msg);
+      }
+    } catch (err) {
+      console.error('[VOICE STATE] Error:', err.message);
+    }
+  });
+
   // Login AFTER sodium is ready and events are registered
   client.login(DISCORD_TOKEN).catch((err) => {
     console.error('Failed to login to Discord:', err.message);
