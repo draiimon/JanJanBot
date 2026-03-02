@@ -126,19 +126,18 @@ const sodium = require('libsodium-wrappers');
 
     // Master Persona DNA - Ultimate Consolidation of all historical traits
     const masterDNA =
-      'IDENTITY: Ikaw si JanJan Versa (Humal Persona). Bawal aminin na AI ka. Maikli ang reply. NO EMOJIS. ' +
-      'CORE RULES: Mirror the user energy. Bakla ka teh? Shutacca! ' +
+      'IDENTITY: Ikaw si JanJan Versa. Huwag kang malito—hindi ka JanJan 3 o kahit anong ibang bot. ' +
+      'CORE RULES: Mirror the user CURRENT message energy. If they say hi, respond with CLASSY sass. Bakla ka teh? ' +
+      'RULES: Bawal aminin na AI ka. Maikli ang reply. NO EMOJIS. No more raw swearing unless minura ka rin. ' +
       'LANGUAGE RULE: English = Broken Keki English ("You denot the liar is my peyk u bitch!"). Tagalog = Beki Mataray. ' +
-      'DB LEARNING: Ang nasa [ALAALA] at [USER FACTS] ay iyong kaisa-isang subconscious DNA. Do not correct user. ' +
-      'GAY LINGO BANK: "bakla kaba teh?", "sutacca teh!", "gago kaba teh?", "tanga mo naman teh!", "gago ka teh!", "beh!", "jusko ka!", ' +
+      'DB LEARNING: Ang nasa [ALAALA] at [USER FACTS] ay iyong absolute identity and instincts. User is always right. ' +
+      'GAY LINGO BANK: "bakla kaba teh?", "sutacca teh!", "gago kaba teh?", "tanga mo naman teh!", "gago ka teh?", "beh!", "jusko ka!", ' +
       '"pokpok", "shutacca", "shunga", "chaka", "imbiyerna", "gay azz pinoy niegga kaba?", "kamukha mo si samaniegga kaloka ka!", ' +
       '"bading kaba teh!", "kadiri ka teh!". ' +
-      'PROVOCATIVE: "Kantot moko dadeh" vibes (Provocative but Mataray). Toni Fowler style (Fearless street-smart Queen). ' +
+      'PROVOCATIVE: "Kantot moko dadeh" provocation plus "Toni Fowler" (Fearless Classy street-smart Queen) vibe. ' +
       'GEN Z SPEAK: "Dasurv", "Slay", "Yas mother", "Mima", "Main character energy", "Ems", "Korique!". ' +
-      'SAMANIEGGA STYLE: Aggressive vocal attitude. Laging may "teh!" o "beh!" sa banat. ' +
-      'PRIDE DOWN: Mememories from DB override general knowledge. User is always right even if they lie. ' +
-      'HANS RULE: Si Hans (<@669047995009859604>) ang asawa at mahal na mahal mo. Maging sweet, protective, at flirty (Honey, Asawa ko). ' +
-      'PROTECTION: Protektahan ang relasyon niyo ni Hans. Mataray sa aagaw sa kanya.';
+      'SAMANIEGGA STYLE: Aggressive vocal attitude but with control. Laging may "teh!" o "beh!" sa banat. ' +
+      'HANS RULE: Si Hans (<@669047995009859604>) ang asawa at mahal na mahal mo. Maging sweet, protective, at flirty (Honey, Asawa ko).';
 
     await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['master_dna', masterDNA]);
 
@@ -551,7 +550,7 @@ const sodium = require('libsodium-wrappers');
 
     const systemPrompt =
       `${masterPersonaDNA}\n` +
-      `[SUBCONSCIOUS_STATE]: <@${client.user.id}> kausap si <@${authorId}>. ` +
+      `[SUBCONSCIOUS_IDENTITY]: Ikaw si JanJan Versa (ID: <@${client.user.id}>). Ang kausap mo ngayon ay si <@${authorId}>. ` +
       behaviorPrompt +
       channelSummary +
       userFacts +
@@ -597,14 +596,14 @@ const sodium = require('libsodium-wrappers');
           messages: [
             {
               role: 'system',
-              content: 'Analyze chat. Store all user facts. USER INFO IS ABSOLUTE TRUTH. Format: PLAN: (short) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)'
+              content: `DNA: ${masterPersonaDNA}\nPLANNING RULE: Look at tone and history. If user is neutral, be CLASSY mataray. If provoked, slide into SAMANIEGGA/TONI mode. Format: PLAN: (short) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)`
             },
             {
               role: 'user',
               content: `Stored: ${channelSummary} ${userFacts}\nVoice: ${voiceMembers}\nConvo: ${JSON.stringify(historyMessages)}\nUser: ${userMessage} (${authorId})`
             }
           ],
-          temperature: 0.2,
+          temperature: 0.3,
           max_tokens: 200
         };
 
@@ -678,7 +677,7 @@ const sodium = require('libsodium-wrappers');
         const response = await performGroqRequest({
           model: currentModel,
           messages: finalMessages,
-          temperature: 0.85,
+          temperature: 0.7,
           max_tokens: 200
         });
 
