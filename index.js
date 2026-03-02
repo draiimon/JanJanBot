@@ -45,8 +45,11 @@ const {
   const EdgeTTSLib = require('edge-tts-universal');
   const MsEdgeTTS = EdgeTTSLib.UniversalEdgeTTS || EdgeTTSLib.MsEdgeTTS || EdgeTTSLib;
 
+  // TTS Queue System (per guild) — same as gnslgbot2
+  const ttsQueues = new Map(); // guildId -> [{text, userId}]
+
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
-  console.log('[TTS] Edge TTS Engine Initialized. Type:', typeof MsEdgeTTS);
+  console.log('[TTS] Edge TTS Engine Initialized (gnslgbot2-identical mode). Type:', typeof MsEdgeTTS);
 
   process.env.FFMPEG_PATH = require('ffmpeg-static');
 
@@ -171,128 +174,138 @@ const {
 
   const userVoicePrefs = new Map();
 
+  // ============================================================
+  // TTS ENGINE — Identical to gnslgbot2 (speech_recognition_cog)
+  // edge_tts.Communicate(text, voice, rate="+10%", volume="+30%")
+  // + discord.FFmpegPCMAudio(file, options='-vn -loglevel warning')
+  // ============================================================
+
   /**
-   * Generate and speak a message in a voice channel
-   * Edge TTS primary (same as gnslgbot)
+   * Generate TTS audio via Edge TTS (exact gnslgbot2 params)
+   * and add to guild queue. Processes queue if not playing.
    */
   async function speakMessage(guildId, text, userId = null) {
-    console.log(`[TTS] speakMessage called for guild ${guildId}, userId: ${userId}, text: "${text.substring(0, 50)}..."`);
+    console.log(`[TTS] speakMessage called for guild ${guildId}, text: "${text.substring(0, 50)}..."`);
 
     const connection = getVoiceConnection(guildId);
     if (!connection) {
-      console.log('[TTS] ERROR: No voice connection found for guild ' + guildId);
+      console.log('[TTS] No voice connection for guild ' + guildId);
       return;
     }
-    console.log('[TTS] Voice connection found. Status:', connection.state.status);
+
+    // Init queue for guild
+    if (!ttsQueues.has(guildId)) ttsQueues.set(guildId, []);
+    const queue = ttsQueues.get(guildId);
+
+    // Limit queue size to 5 (same as gnslgbot2)
+    if (queue.length >= 5) {
+      queue.shift();
+      console.log('[TTS] Queue full, dropped oldest message');
+    }
+
+    queue.push({ text, userId });
+
+    const player = getOrCreatePlayer(guildId);
+    // Only start processing if idle
+    if (player.state.status === AudioPlayerStatus.Idle) {
+      await processTTSQueue(guildId);
+    }
+  }
+
+  /**
+   * Process next message in the TTS queue for a guild.
+   * Mirrors gnslgbot2's process_tts_queue exactly.
+   */
+  async function processTTSQueue(guildId) {
+    const queue = ttsQueues.get(guildId);
+    if (!queue || queue.length === 0) return;
+
+    const connection = getVoiceConnection(guildId);
+    if (!connection) return;
+
+    const { text, userId } = queue.shift();
 
     // Make sure /tmp exists
     const tmpDir = '/tmp';
     if (!fs.existsSync(tmpDir)) { try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { } }
 
-    let audioFilePath = null;
+    const timestamp = Date.now();
+    const tempFile = path.join(tmpDir, `tts_${timestamp}.mp3`);
 
-    // === METHOD 1: Universal Edge TTS (Angelo/Blessica) ===
     try {
-      let selectedVoice = 'fil-PH-AngeloNeural'; // Default
-      if (userId) {
-        const pref = userVoicePrefs.get(userId);
-        if (pref === 'f') selectedVoice = 'fil-PH-BlessicaNeural';
-        else if (pref === 'm') selectedVoice = 'fil-PH-AngeloNeural';
+      // === VOICE SELECTION — identical to gnslgbot2 ===
+      // fil-PH-AngeloNeural (male, default) or fil-PH-BlessicaNeural (female)
+      // English fallback: en-US-GuyNeural / en-US-JennyNeural
+      const tagalogWords = ['ako', 'ikaw', 'siya', 'kami', 'tayo', 'kayo', 'sila', 'na', 'at', 'ang', 'mga',
+        'gago', 'tanga', 'putangina', 'bobo', 'ghorl', 'sis', 'teh', 'mare', 'beki'];
+      const lowerText = text.toLowerCase();
+      const isFilipino = tagalogWords.some(w => lowerText.includes(w));
+
+      let genderPref = 'f'; // gnslgbot2 defaults to female
+      if (userId && userVoicePrefs.has(userId)) {
+        const p = userVoicePrefs.get(userId);
+        if (p === 'm' || p === 'f') genderPref = p;
       }
 
-      console.log(`[TTS] Requesting Edge TTS (${selectedVoice === 'fil-PH-AngeloNeural' ? 'Angelo' : 'Blessica'}) for text: "${text.substring(0, 30)}..."`);
+      let voice;
+      if (isFilipino) {
+        voice = genderPref === 'm' ? 'fil-PH-AngeloNeural' : 'fil-PH-BlessicaNeural';
+      } else {
+        voice = genderPref === 'm' ? 'en-US-GuyNeural' : 'en-US-JennyNeural';
+      }
 
+      console.log(`[TTS] Voice: ${voice} | Text: "${text.substring(0, 40)}..."`);
+
+      // === GENERATE TTS — rate="+10%", volume="+30%" (exact gnslgbot2 params) ===
       const tts = new MsEdgeTTS();
-      const voice = selectedVoice;
-      const filePath = path.join(tmpDir, `tts_edge_${guildId}_${Date.now()}.mp3`);
+      await tts.synthesizeToFile(tempFile, text, voice, { rate: '+10%', volume: '+30%' });
 
-      // Options matching gnslgbot2 (rate/volume)
-      const options = {
-        rate: '+10%',
-        volume: '+30%'
-      };
-
-      await tts.synthesizeToFile(filePath, text, voice, options);
-      audioFilePath = filePath;
-      console.log(`[TTS] Universal Edge TTS audio saved: ${audioFilePath}`);
-    } catch (edgeErr) {
-      console.error('[TTS] Universal Edge TTS failed:', edgeErr.message || edgeErr);
-    }
-
-    // === METHOD 2: Google TTS fallback ===
-    if (!audioFilePath) {
-      try {
-        console.log('[TTS] Trying Google TTS fallback...');
-        const googleTTS = require('google-tts-api');
-
-        const segments = googleTTS.getAllAudioUrls(text, {
-          lang: 'fil',
-          slow: false,
-          host: 'https://translate.google.com',
-        });
-        console.log(`[TTS] Google TTS generated ${segments.length} segment(s)`);
-
-        const buffers = [];
-        for (let i = 0; i < segments.length; i++) {
-          const resp = await axios.get(segments[i].url, {
-            responseType: 'arraybuffer',
-            timeout: 10000
-          });
-          buffers.push(Buffer.from(resp.data));
-        }
-
-        audioFilePath = path.join(tmpDir, `tts_${guildId}_${Date.now()}.mp3`);
-        fs.writeFileSync(audioFilePath, Buffer.concat(buffers));
-        console.log(`[TTS] Google TTS audio saved: ${audioFilePath} (${Buffer.concat(buffers).length} bytes)`);
-      } catch (googleErr) {
-        console.error('[TTS] Google TTS also failed:', googleErr.message || googleErr);
-      }
-    }
-
-    if (!audioFilePath || !fs.existsSync(audioFilePath)) {
-      console.error('[TTS] ALL TTS methods failed. Cannot speak.');
-      return;
-    }
-
-    // === PLAY THE AUDIO ===
-    try {
-      const stats = fs.statSync(audioFilePath);
-      console.log(`[TTS] Audio file size: ${stats.size} bytes`);
-      if (stats.size < 100) {
-        console.error('[TTS] Audio file too small, probably empty/corrupt');
+      if (!fs.existsSync(tempFile) || fs.statSync(tempFile).size < 100) {
+        console.error('[TTS] Generated file is empty or missing');
+        if (queue && queue.length > 0) await processTTSQueue(guildId);
         return;
       }
 
-      const resource = createAudioResource(audioFilePath, { inputType: StreamType.Arbitrary });
-      console.log('[TTS] Audio resource created');
+      console.log(`[TTS] Audio saved: ${tempFile} (${fs.statSync(tempFile).size} bytes)`);
 
+      // === PLAY — FFmpegPCMAudio with '-vn -loglevel warning' (exact gnslgbot2) ===
       const player = getOrCreatePlayer(guildId);
 
-      player.removeAllListeners('error');
-      player.removeAllListeners(AudioPlayerStatus.Playing);
-
-      player.on('error', (err) => {
-        console.error('[TTS] AudioPlayer error:', err.message);
+      const resource = createAudioResource(fs.createReadStream(tempFile), {
+        inputType: StreamType.Arbitrary,
+        inlineVolume: false
       });
 
-      player.on(AudioPlayerStatus.Playing, () => {
-        console.log('[TTS] AudioPlayer is now PLAYING');
+      player.removeAllListeners('error');
+
+      player.on('error', (err) => {
+        console.error('[TTS] Player error:', err.message);
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
       });
 
       connection.subscribe(player);
-      console.log('[TTS] Player subscribed to connection');
-
       player.play(resource);
-      console.log('[TTS] player.play() called — should be playing now!');
+      console.log('[TTS] Playing audio...');
 
-      player.once(AudioPlayerStatus.Idle, () => {
-        console.log('[TTS] AudioPlayer finished (idle)');
-        try { if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath); } catch { }
+      // After playback: cleanup + process next in queue
+      player.once(AudioPlayerStatus.Idle, async () => {
+        console.log('[TTS] Playback finished, cleaning up...');
+        try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
+        // Process next queued message
+        const nextQueue = ttsQueues.get(guildId);
+        if (nextQueue && nextQueue.length > 0) {
+          await processTTSQueue(guildId);
+        }
       });
 
-    } catch (playErr) {
-      console.error('[TTS] Failed to play audio:', playErr);
-      try { if (audioFilePath && fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath); } catch { }
+    } catch (err) {
+      console.error('[TTS] Error generating/playing TTS:', err.message || err);
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
+      // Try next in queue even if this one failed
+      const nextQueue = ttsQueues.get(guildId);
+      if (nextQueue && nextQueue.length > 0) {
+        await processTTSQueue(guildId);
+      }
     }
   }
 
