@@ -21,6 +21,7 @@ const {
   createAudioResource,
   StreamType,
   AudioPlayerStatus,
+  EndBehaviorType,
   NoSubscriberBehavior,
   generateDependencyReport
 } = require('@discordjs/voice');
@@ -42,14 +43,13 @@ const {
   const https = require('https');
   const fs = require('fs');
   const path = require('path');
-  const EdgeTTSLib = require('edge-tts-universal');
-  const MsEdgeTTS = EdgeTTSLib.UniversalEdgeTTS || EdgeTTSLib.MsEdgeTTS || EdgeTTSLib;
+  const { spawn } = require('child_process');
 
   // TTS Queue System (per guild) — same as gnslgbot2
   const ttsQueues = new Map(); // guildId -> [{text, userId}]
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
-  console.log('[TTS] Edge TTS Engine Initialized (gnslgbot2-identical mode). Type:', typeof MsEdgeTTS);
+  console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
 
   process.env.FFMPEG_PATH = require('ffmpeg-static');
 
@@ -256,19 +256,32 @@ const {
 
       console.log(`[TTS] Voice: ${voice} | Text: "${text.substring(0, 40)}..."`);
 
-      // === GENERATE TTS — rate="+10%", volume="+30%" (exact gnslgbot2 params) ===
-      const tts = new MsEdgeTTS();
-      await tts.synthesizeToFile(tempFile, text, voice, { rate: '+10%', volume: '+30%' });
+      // =====================================================================
+      // GENERATE TTS — calls tts.py (Python edge-tts, exact gnslgbot2 params)
+      // python3 tts.py "<text>" "<voice>" "<output.mp3>"
+      // Equivalent to: edge_tts.Communicate(text, voice, rate="+10%", volume="+30%")
+      // =====================================================================
+      await new Promise((resolve, reject) => {
+        const py = spawn('python3', ['tts.py', text, voice, tempFile]);
+        let stderr = '';
+        py.stderr.on('data', (d) => { stderr += d.toString(); });
+        py.on('close', (code) => {
+          if (code !== 0) reject(new Error(`tts.py exited ${code}: ${stderr.trim()}`));
+          else resolve();
+        });
+        py.on('error', reject);
+      });
 
       if (!fs.existsSync(tempFile) || fs.statSync(tempFile).size < 100) {
-        console.error('[TTS] Generated file is empty or missing');
-        if (queue && queue.length > 0) await processTTSQueue(guildId);
+        console.error('[TTS] Python tts.py produced empty/missing file');
+        const nextQueue = ttsQueues.get(guildId);
+        if (nextQueue && nextQueue.length > 0) await processTTSQueue(guildId);
         return;
       }
 
       console.log(`[TTS] Audio saved: ${tempFile} (${fs.statSync(tempFile).size} bytes)`);
 
-      // === PLAY — FFmpegPCMAudio with '-vn -loglevel warning' (exact gnslgbot2) ===
+      // === PLAY — same as gnslgbot2's discord.FFmpegPCMAudio ===
       const player = getOrCreatePlayer(guildId);
 
       const resource = createAudioResource(fs.createReadStream(tempFile), {
@@ -291,7 +304,6 @@ const {
       player.once(AudioPlayerStatus.Idle, async () => {
         console.log('[TTS] Playback finished, cleaning up...');
         try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
-        // Process next queued message
         const nextQueue = ttsQueues.get(guildId);
         if (nextQueue && nextQueue.length > 0) {
           await processTTSQueue(guildId);
@@ -299,13 +311,137 @@ const {
       });
 
     } catch (err) {
-      console.error('[TTS] Error generating/playing TTS:', err.message || err);
+      console.error('[TTS] Error:', err.message || err);
       try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
-      // Try next in queue even if this one failed
       const nextQueue = ttsQueues.get(guildId);
       if (nextQueue && nextQueue.length > 0) {
         await processTTSQueue(guildId);
       }
+    }
+  }
+
+  // =====================================================================
+  // STT ENGINE — same as gnslgbot2's speech_recognition_cog
+  // Listens to a user's voice, decodes Opus→PCM→WAV, runs stt.py,
+  // then calls Groq AI and speaks the response via TTS.
+  // =====================================================================
+
+  const listeningGuilds = new Set();    // guilds where bot is actively listening
+  const activeVoiceUsers = new Map();   // guildId -> userId
+
+  /** Build a valid WAV file from raw PCM (48kHz, 2ch, 16-bit) */
+  function pcmToWav(pcmBuffer) {
+    const sampleRate = 48000, channels = 2, bitDepth = 16;
+    const dataLength = pcmBuffer.length;
+    const buf = Buffer.alloc(44 + dataLength);
+    buf.write('RIFF', 0);
+    buf.writeUInt32LE(36 + dataLength, 4);
+    buf.write('WAVE', 8);
+    buf.write('fmt ', 12);
+    buf.writeUInt32LE(16, 16);
+    buf.writeUInt16LE(1, 20);
+    buf.writeUInt16LE(channels, 22);
+    buf.writeUInt32LE(sampleRate, 24);
+    buf.writeUInt32LE(sampleRate * channels * (bitDepth / 8), 28);
+    buf.writeUInt16LE(channels * (bitDepth / 8), 32);
+    buf.writeUInt16LE(bitDepth, 34);
+    buf.write('data', 36);
+    buf.writeUInt32LE(dataLength, 40);
+    pcmBuffer.copy(buf, 44);
+    return buf;
+  }
+
+  /**
+   * Listen to one utterance from a user, run STT, call AI, speak reply.
+   * Loops while guild is in listeningGuilds (same as gnslgbot2's listen loop).
+   */
+  async function listenAndRespond(guildId, userId, textChannel) {
+    if (!listeningGuilds.has(guildId)) return;
+
+    const connection = getVoiceConnection(guildId);
+    if (!connection) { listeningGuilds.delete(guildId); return; }
+
+    try {
+      const prism = require('prism-media');
+      const receiver = connection.receiver;
+
+      // Subscribe to this user's audio — collect until 1.5s silence
+      const audioStream = receiver.subscribe(userId, {
+        end: { behavior: EndBehaviorType.AfterSilence, duration: 1500 }
+      });
+
+      const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+      const chunks = [];
+
+      audioStream.pipe(decoder);
+      decoder.on('data', (chunk) => chunks.push(chunk));
+
+      await new Promise((resolve) => {
+        decoder.on('end', resolve);
+        decoder.on('error', resolve);
+        audioStream.on('error', resolve);
+      });
+
+      const pcm = Buffer.concat(chunks);
+
+      // Too short = background noise, skip
+      if (pcm.length < 8000) {
+        if (listeningGuilds.has(guildId)) setImmediate(() => listenAndRespond(guildId, userId, textChannel));
+        return;
+      }
+
+      // Write WAV file
+      const tmpDir = '/tmp';
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+      const wavFile = path.join(tmpDir, `stt_${userId}_${Date.now()}.wav`);
+      fs.writeFileSync(wavFile, pcmToWav(pcm));
+
+      // Run stt.py (same as gnslgbot2's recognize_google)
+      const transcript = await new Promise((resolve) => {
+        const py = spawn('python3', ['stt.py', wavFile]);
+        let out = '';
+        py.stdout.on('data', (d) => { out += d.toString(); });
+        py.on('close', () => resolve(out.trim()));
+        py.on('error', () => resolve(''));
+      });
+
+      try { if (fs.existsSync(wavFile)) fs.unlinkSync(wavFile); } catch { }
+
+      if (!transcript) {
+        console.log('[STT] Nothing recognized, listening again...');
+        if (listeningGuilds.has(guildId)) setImmediate(() => listenAndRespond(guildId, userId, textChannel));
+        return;
+      }
+
+      console.log(`[STT] Transcribed from ${userId}: "${transcript}"`);
+
+      // Send transcript to text channel (same as gnslgbot2 console log)
+      if (textChannel) {
+        try { await textChannel.send(`🎤 **${textChannel.guild?.members?.cache?.get(userId)?.displayName || userId}**: ${transcript}`); } catch { }
+      }
+
+      // Get AI response (same as gnslgbot2's handle_voice_command)
+      const aiReply = await callGroqChat(transcript, String(userId), textChannel?.id || null, []);
+      console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}..."`);
+
+      // Speak the reply (TTS)
+      await speakMessage(guildId, aiReply, String(userId));
+
+      // Wait for TTS to finish, then listen again
+      const player = getOrCreatePlayer(guildId);
+      await new Promise((resolve) => {
+        if (player.state.status === AudioPlayerStatus.Idle) { resolve(); return; }
+        player.once(AudioPlayerStatus.Idle, resolve);
+        setTimeout(resolve, 30000); // max 30s wait
+      });
+
+    } catch (err) {
+      console.error('[STT] Error in listenAndRespond:', err.message || err);
+    }
+
+    // Loop: keep listening
+    if (listeningGuilds.has(guildId)) {
+      setImmediate(() => listenAndRespond(guildId, userId, textChannel));
     }
   }
 
@@ -1028,6 +1164,48 @@ const {
 
           await speakMessage(message.guild.id, aiResponse, message.author.id);
           await message.react('🤖').catch(() => { });
+          return;
+        }
+
+        // j!listen — Start voice STT mode (same as gnslgbot2's g!listen / g!ask with no args)
+        if (command === 'listen' || command === 'makinig') {
+          if (!message.guild) return;
+          const member = message.member;
+          if (!member || !member.voice.channel) {
+            await message.reply('Sumali ka muna sa voice channel para makinig ako, ghorl! 🎤');
+            return;
+          }
+          if (activeVoiceUsers.has(message.guild.id) && activeVoiceUsers.get(message.guild.id) !== message.author.id) {
+            await message.reply('May nagpaparinig na ngayon! Hintayin mo muna mag-`j!stop`, sis.');
+            return;
+          }
+          let conn = getVoiceConnection(message.guild.id);
+          if (!conn) {
+            joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+            await new Promise(r => setTimeout(r, 1500));
+            conn = getVoiceConnection(message.guild.id);
+          }
+          if (!conn) { await message.reply('Hindi makaconnect sa voice, mare. Try ulit.'); return; }
+
+          listeningGuilds.add(message.guild.id);
+          activeVoiceUsers.set(message.guild.id, message.author.id);
+          const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+          await message.reply(`🎤 **NAKIKINIG NA AKO!** Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
+          speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
+          listenAndRespond(message.guild.id, message.author.id, message.channel).catch(e => console.error('[STT] loop err:', e));
+          return;
+        }
+
+        // j!stop / j!stoplisten — Stop voice listening (same as gnslgbot2's g!stoplisten)
+        if (command === 'stop' || command === 'stoplisten' || command === 'tigil') {
+          if (!message.guild) return;
+          if (!listeningGuilds.has(message.guild.id)) {
+            await message.reply('Hindi naman ako nakikinig ng voice ngayon, ghorl.');
+            return;
+          }
+          listeningGuilds.delete(message.guild.id);
+          activeVoiceUsers.delete(message.guild.id);
+          await message.reply('🛑 **TUMIGIL NA AKO!** Naupong na ang tenga ko, mare.');
           return;
         }
 
