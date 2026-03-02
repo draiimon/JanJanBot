@@ -556,15 +556,15 @@ const sodium = require('libsodium-wrappers');
     }
 
 
-    // List of models in order of intelligence/wittiness
+    // JanJan's Tiered Intelligence Matrix (Priority Model Fallback)
     const models = [
-      'llama-3.3-70b-versatile',
-      'meta-llama/llama-4-scout-17b-16e-i',
-      'qwen/qwen3-32b',
-      'moonshotai/kimi-k2-instruct-0905',
-      'groq/compound',
-      'groq/compound-mini',
-      'llama-3.1-8b-instant'
+      'llama-3.3-70b-versatile',            // === [PINAKA MAIN / FLAGSHIP MODEL] ===
+      'meta-llama/llama-4-scout-17b-16e-i', // Elite Preview
+      'qwen/qwen3-32b',                     // Creative / Witty
+      'moonshotai/kimi-k2-instruct-0905',   // Multi-lingual Specialist
+      'groq/compound',                      // Stable Powerhouse
+      'groq/compound-mini',                 // Efficient Alternative
+      'llama-3.1-8b-instant'                // Last Resort (Safety Net)
     ];
 
     // ============================================================
