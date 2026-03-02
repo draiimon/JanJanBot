@@ -1114,17 +1114,17 @@ const {
           return;
         }
 
-        // j!voice <m/f> — Set your personal TTS voice preference (Angelo/Blessica)
-        if (command === 'voice') {
+        // j!voice / j!change <m/f> — Set voice (same as gnslgbot2's g!change m/f)
+        if (command === 'voice' || command === 'change') {
           const type = args[0]?.toLowerCase();
           if (type === 'm' || type === 'male' || type === 'angelo') {
             userVoicePrefs.set(message.author.id, 'm');
-            await message.reply('✅ **VOICE SET TO MALE (Angelo)**! Boses macho na ako para sa iyo, sis.');
+            await message.reply('✅ **VOICE CHANGED TO MALE (Angelo)**! 👨 🔊');
           } else if (type === 'f' || type === 'female' || type === 'blessica') {
             userVoicePrefs.set(message.author.id, 'f');
-            await message.reply('✅ **VOICE SET TO FEMALE (Blessica)**! Boses dyosa na ako para sa iyo, sis.');
+            await message.reply('✅ **VOICE CHANGED TO FEMALE (Blessica)**! 👩 🔊');
           } else {
-            await message.reply('❌ **ANONG BOSES YAN, TEH?** Pili ka lang: `j!voice m` (Angelo) o `j!voice f` (Blessica).');
+            await message.reply('❌ Gamitin: `j!change m` (Angelo/Male) o `j!change f` (Blessica/Female).');
           }
           return;
         }
