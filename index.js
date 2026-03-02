@@ -385,13 +385,19 @@ client.on('messageCreate', async (message) => {
 
       // j!chat — owner only. Mirrors g!g from gnslgbot2.
       // j!chat <channel_id or message_id> <text>
+      // j!chat — owner only. Mirrors g!g from gnslgbot2.
+      // j!chat <channel_id or message_id> <text>
       if (command === 'chat') {
         const OWNER_ID = '1477683173520572568';
-        if (message.author.id !== OWNER_ID) return; // silent ignore
-        // Save refs before delete
         const originChannel = message.channel;
         const originGuild = message.guild;
         const authorUser = message.author;
+
+        // Verify owner ID or Administrator perm (as fallback for owner ID issues)
+        const isOwner = message.author.id === OWNER_ID;
+        const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+
+        if (!isOwner && !isAdmin) return; // Silent ignore for non-admins
 
         const targetId = args.shift();
         const customMessage = args.join(' ').trim();
@@ -400,17 +406,19 @@ client.on('messageCreate', async (message) => {
         await message.delete().catch(() => { });
 
         if (!targetId || !customMessage) {
-          try { await authorUser.send('j!chat: kulang ang format. Gamitin: j!chat <channel_id o message_id> <text>'); } catch { }
+          try {
+            await authorUser.send(`j!chat: Kulang ang info, beshie! Format: j!chat <id> <message>\nID na binigay mo: ${targetId || 'wala'}\nMessage: ${customMessage || 'wala'}`);
+          } catch { }
           return;
         }
 
-        // Cache-first then API fetch for channel
+        // 1. Try as a channel ID
         let targetChannel = client.channels.cache.get(targetId) || null;
         if (targetChannel && !targetChannel.isTextBased()) targetChannel = null;
 
         if (!targetChannel) {
           try {
-            const fetched = await client.channels.fetch(targetId);
+            const fetched = await client.channels.fetch(targetId).catch(() => null);
             if (fetched && fetched.isTextBased()) targetChannel = fetched;
           } catch { }
         }
@@ -418,23 +426,23 @@ client.on('messageCreate', async (message) => {
         if (targetChannel) {
           try {
             await targetChannel.send(customMessage);
-            await authorUser.send(`Sent to #${targetChannel.name} (${targetChannel.id}).`);
+            await authorUser.send(`✅ Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
           } catch (e) {
-            try { await authorUser.send(`Failed to send: ${e.message}`); } catch { }
+            try { await authorUser.send(`❌ Failed to send: ${e.message}`); } catch { }
           }
           return;
         }
 
-        // Not a channel — try as message ID for a reply
+        // 2. Try as a message ID (reply mode)
         let targetMessage = null;
-        try { targetMessage = await originChannel.messages.fetch(targetId); } catch { }
+        try { targetMessage = await originChannel.messages.fetch(targetId).catch(() => null); } catch { }
 
         if (!targetMessage && originGuild) {
+          // If not in current channel, try cached channels in the same guild
           for (const ch of originGuild.channels.cache.values()) {
-            if (!ch.isTextBased()) continue;
+            if (!ch.isTextBased() || targetMessage) continue;
             try {
-              targetMessage = await ch.messages.fetch(targetId);
-              if (targetMessage) break;
+              targetMessage = await ch.messages.fetch(targetId).catch(() => null);
             } catch { }
           }
         }
@@ -442,15 +450,33 @@ client.on('messageCreate', async (message) => {
         if (targetMessage) {
           try {
             await targetMessage.reply(customMessage);
-            await authorUser.send(`Replied to message in #${targetMessage.channel.name}.`);
+            await authorUser.send(`✅ Replied in #${targetMessage.channel.name}.`);
           } catch (e) {
-            try { await authorUser.send(`Failed to reply: ${e.message}`); } catch { }
+            try { await authorUser.send(`❌ Failed to reply: ${e.message}`); } catch { }
           }
           return;
         }
 
-        // Nothing found
-        try { await authorUser.send(`j!chat failed. Walang nakitang channel o message sa ID: ${targetId}`); } catch { }
+        // 3. Fallback: ID not found
+        try {
+          await authorUser.send(`❌ j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
+        } catch { }
+        return;
+      }
+
+      // j!whoami — Verify user ID for permissions
+      if (command === 'whoami' || command === 'myid') {
+        const idEmbed = new EmbedBuilder()
+          .setTitle('🆔 Identity Check')
+          .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${message.author.id === '1477683173520572568' ? '✅ You are the **Owner**.' : '❌ You are not the owner ID.'}`)
+          .setColor(message.author.id === '1477683173520572568' ? 0x00ff00 : 0xff0000);
+        await message.reply({ embeds: [idEmbed] });
+        return;
+      }
+
+      // j!ping — Bot status check
+      if (command === 'ping') {
+        await message.reply(`Pong! 🏓 Latency is ${Math.round(client.ws.ping)}ms.`);
         return;
       }
 
