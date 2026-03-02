@@ -1129,45 +1129,56 @@ const {
           return;
         }
 
-        // j!ask <question> — Voice-only AI response
+        // j!ask — EXACT same as gnslgbot2's g!ask:
+        //   j!ask <question>  → text → AI → TTS response
+        //   j!ask (no args)   → start STT voice listening mode (same as g!ask / g!listen)
         if (command === 'ask') {
           if (!message.guild) return;
-          const question = args.join(' ').trim();
-          if (!question) {
-            await message.reply('Ano ngang tatanungin mo, ghorl? Lagyan mo ng chika.');
-            return;
-          }
 
           const member = message.member;
           if (!member || !member.voice.channel) {
-            await message.reply('Doon ka sa voice channel magtanong para marinig mo boses ko, loka!');
+            await message.reply('Sumali ka muna sa voice channel, ghorl! 🎤');
             return;
           }
 
-          // Join if needed
-          const connection = getVoiceConnection(message.guild.id);
-          if (!connection) {
+          // Ensure bot is in voice
+          let conn = getVoiceConnection(message.guild.id);
+          if (!conn) {
             joinAndWatch(member.voice.channel.id, message.guild.id, message.guild.voiceAdapterCreator);
+            await new Promise(r => setTimeout(r, 1500));
+            conn = getVoiceConnection(message.guild.id);
           }
+          if (!conn) { await message.reply('Hindi makaconnect sa voice, mare. Try ulit.'); return; }
 
-          await message.channel.sendTyping();
+          const question = args.join(' ').trim();
 
-          let voiceMembers = [];
-          const myVoiceChannel = message.guild.members.me.voice.channel;
-          if (myVoiceChannel) {
-            voiceMembers = myVoiceChannel.members
-              .filter(m => !m.user.bot)
-              .map(m => m.displayName || m.user.username);
+          if (question) {
+            // === MODE 1: j!ask <question> → text → AI → speak ===
+            await message.channel.sendTyping();
+            let voiceMembers = [];
+            const myVC = message.guild.members.me.voice.channel;
+            if (myVC) voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+            const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
+            await speakMessage(message.guild.id, aiResponse, message.author.id);
+            await message.react('🤖').catch(() => { });
+          } else {
+            // === MODE 2: j!ask (no args) → start STT listening mode ===
+            // Exactly like gnslgbot2's g!ask without args
+            if (activeVoiceUsers.has(message.guild.id) && activeVoiceUsers.get(message.guild.id) !== message.author.id) {
+              await message.reply('May nagpaparinig na ngayon! Hintayin mo muna mag-`j!stop`, sis.');
+              return;
+            }
+            listeningGuilds.add(message.guild.id);
+            activeVoiceUsers.set(message.guild.id, message.author.id);
+            const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
+            await message.reply(`🎤 **GAME NA!** I'm listening in **${member.voice.channel.name}**! Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
+            speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
+            listenAndRespond(message.guild.id, message.author.id, message.channel).catch(e => console.error('[STT] loop err:', e));
           }
-
-          const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
-
-          await speakMessage(message.guild.id, aiResponse, message.author.id);
-          await message.react('🤖').catch(() => { });
           return;
         }
 
-        // j!listen — Start voice STT mode (same as gnslgbot2's g!listen / g!ask with no args)
+        // j!listen — alias for j!ask (no args) — same as gnslgbot2's g!listen
         if (command === 'listen' || command === 'makinig') {
           if (!message.guild) return;
           const member = message.member;
