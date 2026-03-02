@@ -517,7 +517,7 @@ const sodium = require('libsodium-wrappers');
     }
 
     // ============================================================
-    // STEP 1: BACKEND THINKING (The "Catch-up" phase)
+    // STEP 1: BACKEND THINKING & REAL-TIME LEARNING
     // ============================================================
     let internalThoughts = '';
     try {
@@ -529,9 +529,10 @@ const sodium = require('libsodium-wrappers');
             content:
               'Ikaw ay ang internal reasoning engine ni JanJan. ' +
               'Ang task mo ay i-analyze ang usapan, ang channel memory, at ang user facts. ' +
-              'Mag-isip ka kung paano sasagot si JanJan nang pak na pak, precise, at hindi shunga. ' +
-              'Catch up on the context. Plan the response style (mataray or sassy). ' +
-              'Isulat mo ang internal thoughts mo sa isang maikling paragraph.'
+              'DAPAT MONG MATANDAAN ang lahat ng sinasabi ng user (names, preferences, chismis). ' +
+              'Format your response as:\n' +
+              'PLAN: (Your internal thought on how to reply mataray/sassy)\n' +
+              'LEARNED_FACTS: (Direct facts you learned about the user in this message only)'
           },
           {
             role: 'user',
@@ -542,14 +543,40 @@ const sodium = require('libsodium-wrappers');
               `Current User Message: ${userMessage}`
           }
         ],
-        temperature: 0.5,
-        max_tokens: 250
+        temperature: 0.3,
+        max_tokens: 300
       };
 
       const thinkingRes = await axios.post(apiUrl, thinkingPayload, {
         headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
       });
-      internalThoughts = thinkingRes.data.choices?.[0]?.message?.content || '';
+      const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
+
+      // Parse Plan and Facts
+      const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=LEARNED_FACTS:|$)/i);
+      const factsMatch = reasoningText.match(/LEARNED_FACTS:\s*([\s\S]*)/i);
+
+      internalThoughts = planMatch ? planMatch[1].trim() : reasoningText;
+      const newFacts = factsMatch ? factsMatch[1].trim() : '';
+
+      if (newFacts && authorId && !newFacts.toLowerCase().includes('wala')) {
+        try {
+          // Add to user memory immediately
+          const oldUserRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [authorId]);
+          const oldFacts = oldUserRes.rows.length > 0 ? oldUserRes.rows[0].facts : '';
+          const combinedFacts = oldFacts ? `${oldFacts} | ${newFacts}` : newFacts;
+
+          await pool.query(
+            'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+            'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+            [authorId, combinedFacts]
+          );
+          console.log(`[REAL-TIME LEARNING] Instant fact learned for user ${authorId}: ${newFacts}`);
+        } catch (dbErr) {
+          console.error('[DB] Real-time learning save error:', dbErr.message);
+        }
+      }
+
       console.log(`[THINKING] JanJan's internal plan: ${internalThoughts}`);
     } catch (err) {
       console.error('[THINKING] Error in reasoning step:', err.message);
@@ -560,7 +587,7 @@ const sodium = require('libsodium-wrappers');
     // ============================================================
     try {
       const chatMessages = [
-        { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN/THOUGHTS]: ${internalThoughts}` : '') },
+        { role: 'system', content: systemPrompt + (internalThoughts ? `\n\n[INTERNAL PLAN]: ${internalThoughts}` : '') },
         ...historyMessages,
         { role: 'user', content: userMessage }
       ];
