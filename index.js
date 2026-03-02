@@ -401,39 +401,75 @@ const {
         try {
           console.log(`[STT] Subscribing to audio for user ${targetUserId}...`);
 
-          // Directly subscribe — stream fills with audio when user speaks,
-          // ends after 800ms of silence (gnslgbot2: 0.8s threshold)
+          // Use Manual end — WE control when to stop, not Discord
+          // Same as gnslgbot2's VoiceSink: amplitude-based silence detection
           const audioStream = receiver.subscribe(targetUserId, {
-            end: { behavior: EndBehaviorType.AfterSilence, duration: 800 }
-          });
-
-          // Track raw bytes to diagnose DAVE/Discord audio delivery issues
-          let rawBytes = 0;
-          audioStream.on('data', (chunk) => {
-            rawBytes += chunk.length;
+            end: { behavior: EndBehaviorType.Manual }
           });
 
           const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
-          const chunks = [];
+          const audioData = [];
+          let isSpeaking = false;
+          let silenceMs = 0;
+          let resolved = false;
+          const SILENCE_THRESHOLD = 2000; // gnslgbot2: self.silence_threshold = 2000
+          const SILENCE_NEEDED = 800;     // gnslgbot2: 0.8s = 800ms
 
           audioStream.pipe(decoder);
-          decoder.on('data', ch => chunks.push(ch));
 
-          // 30-second safety timeout — if no audio arrives, destroy and retry
-          const streamTimeout = setTimeout(() => {
-            console.log(`[STT] 30s timeout — raw bytes received: ${rawBytes}. Resubscribing.`);
+          const done = () => {
+            if (resolved) return;
+            resolved = true;
             try { audioStream.destroy(); } catch { }
-          }, 30000);
+          };
 
-          await new Promise(resolve => {
-            decoder.on('end', () => { clearTimeout(streamTimeout); resolve(); });
-            decoder.on('error', () => { clearTimeout(streamTimeout); resolve(); });
-            audioStream.on('error', () => { clearTimeout(streamTimeout); resolve(); });
-            audioStream.on('close', () => { clearTimeout(streamTimeout); resolve(); });
+          decoder.on('data', (pcmChunk) => {
+            // Check max amplitude in this chunk (same as gnslgbot2's VoiceSink.write)
+            let maxAmp = 0;
+            for (let i = 0; i < pcmChunk.length - 1; i += 2) {
+              const sample = pcmChunk.readInt16LE(i);
+              if (Math.abs(sample) > maxAmp) maxAmp = Math.abs(sample);
+            }
+
+            if (maxAmp > SILENCE_THRESHOLD) {
+              // Speech detected
+              if (!isSpeaking) {
+                isSpeaking = true;
+                console.log(`[STT] 🗣️ Speech detected (amp: ${maxAmp})`);
+              }
+              silenceMs = 0;
+              audioData.push(pcmChunk);
+            } else if (isSpeaking) {
+              // Silence while was speaking
+              silenceMs += 20; // Each Opus frame = 20ms
+              audioData.push(pcmChunk);
+
+              // gnslgbot2: if self.silence_duration > 0.8 → process
+              if (silenceMs >= SILENCE_NEEDED) {
+                console.log(`[STT] 🔇 Silence ${silenceMs}ms — processing audio`);
+                done();
+              }
+            }
           });
 
-          const pcm = Buffer.concat(chunks);
-          console.log(`[STT] Stream ended — raw opus: ${rawBytes}B, decoded PCM: ${pcm.length}B`);
+          // 15s safety timeout
+          const timeout = setTimeout(() => {
+            if (!resolved) {
+              console.log('[STT] 15s timeout, resubscribing...');
+              done();
+            }
+          }, 15000);
+
+          await new Promise(resolve => {
+            const check = setInterval(() => {
+              if (resolved) { clearInterval(check); clearTimeout(timeout); resolve(); }
+            }, 50);
+            decoder.on('end', () => { clearInterval(check); clearTimeout(timeout); resolve(); });
+            decoder.on('error', () => { clearInterval(check); clearTimeout(timeout); resolve(); });
+          });
+
+          const pcm = Buffer.concat(audioData);
+          console.log(`[STT] Audio captured: ${pcm.length} bytes (${(pcm.length / 192000).toFixed(1)}s)`);
 
           // gnslgbot2: skip if < 96000 bytes (~1 second of audio)
           if (pcm.length < 96000) {
