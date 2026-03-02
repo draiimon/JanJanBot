@@ -91,39 +91,112 @@ const sodium = require('libsodium-wrappers-sumo');
 
   /**
    * Generate and speak a message in a voice channel
+   * Uses google-tts-api (reliable) with msedge-tts male voice as fallback
    */
   async function speakMessage(guildId, text) {
+    console.log(`[TTS] speakMessage called for guild ${guildId}, text: "${text.substring(0, 50)}..."`);
+
     const connection = getVoiceConnection(guildId);
-    if (!connection) return;
+    if (!connection) {
+      console.log('[TTS] ERROR: No voice connection found for guild ' + guildId);
+      return;
+    }
+    console.log('[TTS] Voice connection found. Status:', connection.state.status);
 
+    const tempFile = path.join('/tmp', `tts_${guildId}_${Date.now()}.mp3`);
+    let audioReady = false;
+
+    // === METHOD 1: Google TTS (reliable, works everywhere) ===
     try {
-      const tts = new MsEdgeTTS();
-      const tempFile = path.join(__dirname, `tts_${guildId}_${Date.now()}.mp3`);
+      console.log('[TTS] Trying Google TTS...');
+      const googleTTS = require('google-tts-api');
 
-      // Wait a tiny bit for connection to be rock solid
-      await new Promise(r => setTimeout(r, 1000));
+      // Split text if over 200 chars
+      const segments = googleTTS.getAllAudioUrls(text, {
+        lang: 'fil',
+        slow: false,
+        host: 'https://translate.google.com',
+      });
+      console.log(`[TTS] Google TTS generated ${segments.length} segment(s)`);
 
-      await tts.setMetadata('fil-PH-AngeloNeural', 'audio-24khz-48kbitrate-mono-mp3');
+      // Download all segments and combine
+      const buffers = [];
+      for (let i = 0; i < segments.length; i++) {
+        console.log(`[TTS] Downloading segment ${i + 1}/${segments.length}...`);
+        const resp = await axios.get(segments[i].url, {
+          responseType: 'arraybuffer',
+          timeout: 10000
+        });
+        buffers.push(Buffer.from(resp.data));
+      }
+
+      const combined = Buffer.concat(buffers);
+      fs.writeFileSync(tempFile, combined);
+      console.log(`[TTS] Google TTS audio saved: ${tempFile} (${combined.length} bytes)`);
+      audioReady = true;
+
+    } catch (googleErr) {
+      console.error('[TTS] Google TTS failed:', googleErr.message || googleErr);
+    }
+
+    // === METHOD 2: Edge TTS fallback (male voice) ===
+    if (!audioReady) {
       try {
+        console.log('[TTS] Trying MsEdgeTTS fallback...');
+        const tts = new MsEdgeTTS();
+        await tts.setMetadata('fil-PH-AngeloNeural', 'audio-24khz-48kbitrate-mono-mp3');
         await tts.toFile(tempFile, text);
-      } catch (ttsErr) {
-        console.error('MsEdgeTTS File Error:', ttsErr);
-        throw ttsErr;
+        console.log('[TTS] MsEdgeTTS audio saved to:', tempFile);
+        audioReady = true;
+      } catch (edgeErr) {
+        console.error('[TTS] MsEdgeTTS also failed:', edgeErr.message || edgeErr);
+      }
+    }
+
+    if (!audioReady) {
+      console.error('[TTS] ALL TTS methods failed. Cannot speak.');
+      return;
+    }
+
+    // === PLAY THE AUDIO ===
+    try {
+      // Verify file exists and has content
+      const stats = fs.statSync(tempFile);
+      console.log(`[TTS] Audio file size: ${stats.size} bytes`);
+      if (stats.size < 100) {
+        console.error('[TTS] Audio file too small, probably empty/corrupt');
+        return;
       }
 
       const resource = createAudioResource(tempFile, { inputType: StreamType.Arbitrary });
+      console.log('[TTS] Audio resource created');
+
       const player = getOrCreatePlayer(guildId);
 
+      // Listen for player errors
+      player.on('error', (err) => {
+        console.error('[TTS] AudioPlayer error:', err.message);
+      });
+
+      player.on(AudioPlayerStatus.Playing, () => {
+        console.log('[TTS] AudioPlayer is now PLAYING');
+      });
+
       connection.subscribe(player);
+      console.log('[TTS] Player subscribed to connection');
+
       player.play(resource);
+      console.log('[TTS] player.play() called — should be playing now!');
 
       // Cleanup after finish
       player.once(AudioPlayerStatus.Idle, () => {
+        console.log('[TTS] AudioPlayer finished (idle)');
         try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
       });
 
-    } catch (e) {
-      console.error('speakMessage error detail:', e);
+    } catch (playErr) {
+      console.error('[TTS] Failed to play audio:', playErr);
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { }
     }
   }
 
@@ -167,6 +240,7 @@ const sodium = require('libsodium-wrappers-sumo');
 
   // Join a voice channel and set up auto-reconnect on disconnect
   function joinAndWatch(channelId, guildId, adapterCreator) {
+    console.log(`[VOICE] Joining channel ${channelId} in guild ${guildId}`);
     const connection = joinVoiceChannel({
       channelId,
       guildId,
@@ -174,9 +248,14 @@ const sodium = require('libsodium-wrappers-sumo');
       selfDeaf: false
     });
 
+    // Log state changes
+    connection.on('stateChange', (oldState, newState) => {
+      console.log(`[VOICE] Connection state: ${oldState.status} -> ${newState.status}`);
+    });
+
     // Catch errors so the process does NOT crash
     connection.on('error', (err) => {
-      console.error('VoiceConnection error:', err.message);
+      console.error('[VOICE] Connection error:', err.message, err);
     });
 
     // Auto-reconnect when disconnected
