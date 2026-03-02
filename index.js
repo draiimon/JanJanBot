@@ -504,12 +504,14 @@ const sodium = require('libsodium-wrappers');
     if (channelId) {
       try {
         const historyRes = await pool.query(
-          'SELECT author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
+          'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
           [channelId]
         );
+        console.log(`[DB] Fetched ${historyRes.rows.length} messages for history in channel ${channelId}`);
+
         historyMessages = historyRes.rows.reverse().map(row => ({
-          role: 'user',
-          content: `[${row.author_tag}]: ${row.content}`
+          role: row.author_id === client.user.id ? 'assistant' : 'user',
+          content: row.author_id === client.user.id ? row.content : `[${row.author_tag}]: ${row.content}`
         }));
       } catch (err) {
         console.error('[DB] History fetch error:', err.message);
@@ -1160,7 +1162,22 @@ const sodium = require('libsodium-wrappers');
       const reply = await callGroqChat(content, message.author.id, message.channel.id);
 
       if (reply && reply.length > 0) {
-        await message.reply(reply);
+        const sentMessage = await message.reply(reply);
+        // Save the bot's reply to DB so it remembers what it said
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              reply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Bot reply save error:', dbErr.message);
+        }
       }
     } catch (err) {
       console.error('Error handling messageCreate:', err);
