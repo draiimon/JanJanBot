@@ -593,7 +593,7 @@ const sodium = require('libsodium-wrappers');
           messages: [
             {
               role: 'system',
-              content: `DNA: ${masterPersonaDNA}\nPLANNING RULE: Look at tone and history. If user is neutral, be CLASSY mataray. If provoked, slide into SAMANIEGGA/TONI mode. Format: PLAN: (short) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)`
+              content: `DNA: ${masterPersonaDNA}\nPLANNING RULE: Mirror the USER mood 100%. If neutral, be direct/short. If angry, be angry. If baklaan, go wild. NO SLANG DUMP for facts. Format: PLAN: (short) | UNIVERSAL_LEARNING: (ID: fact | ID: fact)`
             },
             {
               role: 'user',
