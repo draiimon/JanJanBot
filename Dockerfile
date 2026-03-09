@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
@@ -15,13 +15,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python edge-tts + SpeechRecognition — exact same libraries gnslgbot2 uses
-RUN pip3 install edge-tts SpeechRecognition --break-system-packages
+RUN pip3 install --no-cache-dir edge-tts SpeechRecognition --break-system-packages
 
-COPY package.json package-lock.json* ./ 
-RUN npm install --production
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev --no-fund --no-audit
 
 COPY . .
 
 ENV NODE_ENV=production
+
+EXPOSE 10000
 
 CMD ["npm", "start"]

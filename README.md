@@ -1,99 +1,84 @@
 # JanJan Discord AI Bot
 
-AI Discord bot using Groq (`openai/gpt-oss-120b`) that replies in friendly Tagalog beki-style when mentioned or when you reply to it.
+JanJan is a Discord AI bot with:
 
-## 1. Requirements
+- Groq-backed chat replies
+- text-to-speech and speech-to-text voice flows
+- Postgres-backed memory and saved voice state
+- Render-safe health endpoints and boot diagnostics
+- 24/7 voice rejoin scheduling that survives restarts
 
-- Node.js 18+ (recommended)
-- A Discord bot application and token
-- A Groq API key
+## Requirements
 
-## 2. Setup
+- Node.js 22+
+- Python 3
+- FFmpeg
+- A Discord bot token
+- A Postgres database URL
+- At least one Groq API key
 
-1. Open a terminal in this folder:
+## Environment
 
-   ```bash
-   cd "c:/Users/Aloof/Desktop/Andrei/JanJan"
-   ```
+Use [`.env.example`](/c:/Users/Aloof/Desktop/Andrei/JanJan/.env.example) as the template.
 
-2. Install dependencies:
+Required:
 
-   ```bash
-   npm install
-   ```
+- `DISCORD_TOKEN`
+- `DATABASE_URL`
+- `GROQ_API_KEY` or `GROQ_API_KEY1` / `GROQ_API_KEY2`
 
-3. Environment variables:
+Optional:
 
-   - The `.env` file is already created locally (and is gitignored).
-   - If you ever need to recreate it, copy from `.env.example` and fill in:
+- `PUBLIC_BASE_URL`
+- `SELF_PING_ENABLED`
+- `SELF_PING_INTERVAL_MS`
 
-   ```bash
-   DISCORD_TOKEN=your_discord_bot_token_here
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
-
-## 3. Running the bot (local)
-
-In the same folder:
+## Local Run
 
 ```bash
+npm install
+npm run check
 npm start
 ```
 
-If everything is correct, you should see something like:
+## Render Deploy
 
-```text
-Logged in as YourBotName#1234
-```
+This repo is set up for the usual Git-connected Render web service flow.
 
-## 4. Running from cloud (Render Web Service, free)
-
-Sa Render free (walang card), gamitin mo siya as **Web Service**:
-
-1. Sa Render, click **New → Web Service** at piliin ang `JanJanBot` repo mo.
-2. Branch: `main`
-3. **Build Command**:
-
-   ```bash
-   npm install
-   ```
-
-4. **Start Command**:
-
-   ```bash
-   npm start
-   ```
-
-5. Sa Environment variables sa Render dashboard, idagdag:
+1. Push to the connected branch.
+2. Let Render auto-deploy from Git.
+3. Keep these env vars configured in the existing Render service:
    - `DISCORD_TOKEN`
-   - `GROQ_API_KEY`
+   - `DATABASE_URL`
+   - `GROQ_API_KEY` and optional rotated keys
 
-6. Hayaan mong Render mag-assign ng `PORT`. May maliit na HTTP server si JanJan sa `index.js` na nakikinig sa `process.env.PORT`, kaya magiging healthy yung Web Service habang tumatakbo rin ang Discord bot.
+Render health endpoints:
 
-7. Pag “Live” na yung service, dapat online na rin ang bot sa Discord 24/7 (hangga’t hindi naka-sleep yung free instance).
+- `/health` - runtime + Discord + DB + voice diagnostics
+- `/ready` - Discord client readiness
+- `/ping` - lightweight uptime target
 
-## 5. How to use
+## 24/7 Voice Behavior
 
-- Invite the bot to your server with proper message content intent enabled.
-- In the **Bot** settings in Discord Developer Portal, it is recommended to enable:
-  - MESSAGE CONTENT INTENT
-  - SERVER MEMBERS INTENT
-  - PRESENCE INTENT
-- The bot will answer when:
-  - You **mention** it in a message (e.g. `@JanJan kamusta ka na teh?`)
-  - You **reply** to one of its messages.
-- Replies are:
-  - Tagalog
-  - Beki-style (pang-bading)
-  - Friendly and wholesome (no NSFW/offensive content)
+JanJan now stores the last joined VC in Postgres and will:
 
-### Commands
+- reload the saved VC after restart
+- schedule deduplicated rejoin attempts
+- rejoin after disconnect, destroy, or forced move/kick
+- expose the current voice state in `/health`
 
-- `j!status <note>` – admins only: set ng custom "bubble status" text mo sa server na 'to, lalabas sa `j!view` at gagamitin din bilang activity ng bot.
-- `j!join` – papasok si JanJan sa voice channel mo kung saan ka naka-VC ngayon, para sama-sama sa call (kailangan may Connect/Speak perms si bot).
-- `j!view @User` – embed/profile view ng member: malaking avatar picture + status + baklang chika.
-- `j!test` – manual test ng greeting: gagamitin ang AI persona ni JanJan para bumati sa mga online/idle/dnd depende sa oras ngayon.
-- `j!help` – listahan ng commands at paano ka makipag-chikahan kay JanJan.
+If `DATABASE_URL` is missing, this persistence does not work, so keep it configured in Render.
 
-Enjoy the chikahan with your AI beki bot! 💅
+## Commands
 
+- `j!join`
+- `j!leave`
+- `j!vc <text>`
+- `j!ask [question]`
+- `j!listen`
+- `j!stop`
+- `j!voice <m|f>`
+- `j!view @user`
+- `j!status <text>`
+- `j!admin`
+- `j!help`

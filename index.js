@@ -1,16 +1,21 @@
 require('dotenv').config();
 
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const RENDER_URL = process.env.RENDER_URL || 'https://janjanbot.onrender.com';
+const { loadConfig } = require('./src/config');
+const { createRuntimeState } = require('./src/runtime/state');
+const { createWebServer } = require('./src/server/createWebServer');
+const { registerProcessLifecycle } = require('./src/runtime/processLifecycle');
+const { startSelfPing } = require('./src/runtime/startSelfPing');
 
-const GROQ_KEYS = [
-  process.env.GROQ_API_KEY1,
-  process.env.GROQ_API_KEY2,
-  process.env.GROQ_API_KEY
-].filter(Boolean);
+const config = loadConfig(process.env);
+const runtimeState = createRuntimeState(config);
 
-if (!DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in .env'); process.exit(1); }
-if (GROQ_KEYS.length === 0) { console.error('Missing GROQ_API_KEYs in .env'); process.exit(1); }
+const DISCORD_TOKEN = config.discordToken;
+const GROQ_KEYS = config.groqKeys;
+
+if (config.missing.length > 0) {
+  console.error(`Missing required environment variables: ${config.missing.join(', ')}`);
+  process.exit(1);
+}
 
 const {
   joinVoiceChannel,
@@ -39,14 +44,17 @@ const {
 
   const axios = require('axios');
   const { Pool } = require('pg');
-  const http = require('http');
-  const https = require('https');
   const fs = require('fs');
   const path = require('path');
   const { spawn } = require('child_process');
 
   // TTS Queue System (per guild) — same as gnslgbot2
   const ttsQueues = new Map(); // guildId -> [{text, userId}]
+  const userCustomStatus = new Map();
+  const autoTtsChannels = new Map();
+  const audioPlayers = new Map();
+  const aiUserCooldowns = new Map();
+  const aiChannelCooldowns = new Map();
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -66,13 +74,101 @@ const {
     partials: [Partials.Channel]
   });
 
+  client.on('error', (err) => {
+    runtimeState.process.lastUnhandledError = {
+      source: 'discord-client',
+      message: err.message,
+      stack: err.stack || null,
+      at: new Date().toISOString()
+    };
+    console.error('[DISCORD] Client error:', err.message);
+  });
+
+  client.on('shardDisconnect', (event, shardId) => {
+    runtimeState.discord.ready = false;
+    runtimeState.discord.lastLoginError = `Shard ${shardId} disconnected (${event.code})`;
+    console.warn(`[DISCORD] Shard ${shardId} disconnected with code ${event.code}.`);
+  });
+
+  client.on('shardResume', (shardId, replayedEvents) => {
+    runtimeState.discord.ready = true;
+    runtimeState.discord.lastLoginError = null;
+    console.log(`[DISCORD] Shard ${shardId} resumed (${replayedEvents} replayed event(s)).`);
+  });
+
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: config.databaseUrl,
     ssl: { rejectUnauthorized: false }
   });
 
+  pool.on('connect', () => {
+    runtimeState.database.connected = true;
+    runtimeState.database.connectedAt = runtimeState.database.connectedAt || new Date().toISOString();
+    runtimeState.database.lastError = null;
+  });
+
+  pool.on('error', (err) => {
+    runtimeState.database.connected = false;
+    runtimeState.database.lastError = err.message;
+    console.error('[DB] Pool error:', err.message);
+  });
+
+  let scheduledVoiceRejoin = null;
+  let isVoiceRejoinInProgress = false;
+
+  const webServer = createWebServer({
+    config,
+    runtimeState,
+    client,
+    getDiagnostics: () => ({})
+  });
+
+  await webServer.start();
+
+  let stopSelfPing = startSelfPing({ config, runtimeState });
+
+  const unregisterProcessLifecycle = registerProcessLifecycle({
+    runtimeState,
+    shutdown: async () => {
+      stopSelfPing();
+
+      if (scheduledVoiceRejoin) {
+        clearTimeout(scheduledVoiceRejoin);
+        scheduledVoiceRejoin = null;
+      }
+
+      for (const player of audioPlayers.values()) {
+        try {
+          player.stop(true);
+        } catch {}
+      }
+
+      try {
+        client.destroy();
+      } catch (error) {
+        console.error('[PROCESS] Discord client shutdown error:', error.message);
+      }
+
+      try {
+        await pool.end();
+      } catch (error) {
+        console.error('[PROCESS] Database shutdown error:', error.message);
+      }
+
+      try {
+        await webServer.close();
+      } catch (error) {
+        console.error('[PROCESS] Web server shutdown error:', error.message);
+      }
+
+      unregisterProcessLifecycle();
+    }
+  });
+
+  let dbClient;
+
   try {
-    const dbClient = await pool.connect();
+    dbClient = await pool.connect();
     console.log('[DB] Connected to Neon Postgres successfully.');
     await dbClient.query(`
           CREATE TABLE IF NOT EXISTS messages (
@@ -117,20 +213,12 @@ const {
 
     console.log('[DB] Tables initialized (messages, channel_memory, user_memory, persona).');
   } catch (err) {
+    runtimeState.database.connected = false;
+    runtimeState.database.lastError = err.message;
     console.error('[DB] Connection/Init Error:', err.message);
+  } finally {
+    dbClient?.release();
   }
-
-  // In-memory custom bubble status per user per guild
-  const userCustomStatus = new Map();
-
-  // Auto TTS channels per guild (Set of channel IDs)
-  const autoTtsChannels = new Map();
-  const audioPlayers = new Map();
-
-  // Spam prevention for AI triggers (to save Groq tokens)
-  const aiUserCooldowns = new Map();
-  const aiChannelCooldowns = new Map();
-
   // API Key Rotation Persistence
   let currentKeyIndex = 0;
   const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
@@ -607,6 +695,60 @@ const {
   // =====================================================================
   let savedVoiceState = null; // { channelId, guildId } — cached in memory
 
+  function setSavedVoiceState(state) {
+    savedVoiceState = state ? { ...state } : null;
+    runtimeState.voice.savedState = savedVoiceState;
+  }
+
+  function clearScheduledVoiceRejoin() {
+    if (scheduledVoiceRejoin?.timeout) {
+      clearTimeout(scheduledVoiceRejoin.timeout);
+    }
+
+    scheduledVoiceRejoin = null;
+    runtimeState.voice.nextRejoinAt = null;
+  }
+
+  function scheduleVoiceRejoin(reason, delayMs, state = savedVoiceState) {
+    if (!state) {
+      return;
+    }
+
+    const executeAt = Date.now() + delayMs;
+
+    if (
+      scheduledVoiceRejoin &&
+      scheduledVoiceRejoin.guildId === state.guildId &&
+      scheduledVoiceRejoin.channelId === state.channelId &&
+      scheduledVoiceRejoin.executeAt <= executeAt
+    ) {
+      console.log('[VOICE 24/7] Rejoin already scheduled sooner. Keeping the existing timer.');
+      return;
+    }
+
+    clearScheduledVoiceRejoin();
+
+    runtimeState.voice.lastRejoinReason = reason;
+    runtimeState.voice.nextRejoinAt = new Date(executeAt).toISOString();
+
+    const timeout = setTimeout(() => {
+      scheduledVoiceRejoin = null;
+      runtimeState.voice.nextRejoinAt = null;
+      tryRejoinVoice(state.guildId, state.channelId, reason);
+    }, delayMs);
+
+    timeout.unref?.();
+
+    scheduledVoiceRejoin = {
+      guildId: state.guildId,
+      channelId: state.channelId,
+      executeAt,
+      timeout
+    };
+
+    console.log(`[VOICE 24/7] Rejoin scheduled in ${Math.round(delayMs / 1000)}s (${reason}).`);
+  }
+
   /** Save voice state to database for persistence across restarts */
   async function saveVoiceStateToDB(guildId, channelId) {
     try {
@@ -681,8 +823,6 @@ const {
 
   // Join a voice channel and set up BULLETPROOF auto-reconnect on disconnect
   let voiceReconnectAttempts = 0;
-  const MAX_RECONNECT_ATTEMPTS = 50; // basically unlimited retries
-
   function joinAndWatch(channelId, guildId, adapterCreator) {
     console.log(`[VOICE 24/7] Joining channel ${channelId} in guild ${guildId}`);
 
@@ -703,16 +843,22 @@ const {
     // Log state changes
     connection.on('stateChange', (oldState, newState) => {
       console.log(`[VOICE 24/7] Connection state: ${oldState.status} -> ${newState.status}`);
+      runtimeState.voice.connectionStatus = newState.status;
     });
 
     // Catch errors so the process does NOT crash
     connection.on('error', (err) => {
+      runtimeState.voice.connectionStatus = 'error';
       console.error('[VOICE 24/7] Connection error:', err.message);
     });
 
     // On Ready — reset reconnect counter
     connection.on(VoiceConnectionStatus.Ready, () => {
       voiceReconnectAttempts = 0; // reset on successful connection
+      runtimeState.voice.reconnectAttempts = 0;
+      runtimeState.voice.connectionStatus = VoiceConnectionStatus.Ready;
+      runtimeState.voice.lastReadyAt = new Date().toISOString();
+      clearScheduledVoiceRejoin();
       console.log(`[VOICE 24/7] ✅ Ready in guild ${guildId}! Nandito na ako, 24/7 mode!`);
     });
 
@@ -733,29 +879,25 @@ const {
         try { connection.destroy(); } catch { }
 
         voiceReconnectAttempts++;
+        runtimeState.voice.reconnectAttempts = voiceReconnectAttempts;
         // Exponential backoff: 3s, 6s, 12s, 24s... max 60s
         const delay = Math.min(3000 * Math.pow(2, voiceReconnectAttempts - 1), 60000);
         console.log(`[VOICE 24/7] Retry #${voiceReconnectAttempts} in ${delay / 1000}s...`);
-
-        setTimeout(() => {
-          if (savedVoiceState) {
-            tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
-          }
-        }, delay);
+        scheduleVoiceRejoin('disconnected', delay);
       }
     });
 
     // Handle Destroyed state — schedule rejoin
     connection.on(VoiceConnectionStatus.Destroyed, () => {
+      runtimeState.voice.connectionStatus = VoiceConnectionStatus.Destroyed;
       console.log(`[VOICE 24/7] Connection destroyed for guild ${guildId}`);
       // Only rejoin if we still have a saved state (not manually j!leave)
       if (savedVoiceState && savedVoiceState.guildId === guildId) {
         const delay = Math.min(5000 * Math.pow(2, voiceReconnectAttempts), 60000);
         voiceReconnectAttempts++;
+        runtimeState.voice.reconnectAttempts = voiceReconnectAttempts;
         console.log(`[VOICE 24/7] Will rejoin in ${delay / 1000}s...`);
-        setTimeout(() => {
-          tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
-        }, delay);
+        scheduleVoiceRejoin('destroyed', delay);
       }
     });
 
@@ -763,45 +905,55 @@ const {
   }
 
   // Rejoin voice channel by guildId and channelId — NEVER gives up
-  async function tryRejoinVoice(guildId, channelId) {
+  async function tryRejoinVoice(guildId, channelId, reason = 'manual') {
+    if (isVoiceRejoinInProgress) {
+      console.log('[VOICE 24/7] Rejoin already in progress. Skipping duplicate attempt.');
+      return;
+    }
+
+    isVoiceRejoinInProgress = true;
+    runtimeState.voice.lastRejoinReason = reason;
+    runtimeState.voice.lastRejoinAttemptAt = new Date().toISOString();
+
     try {
       // Make sure we're not already connected
       const existing = getVoiceConnection(guildId);
-      if (existing && existing.state.status !== 'destroyed') {
+      if (existing && existing.state.status !== VoiceConnectionStatus.Destroyed && existing.state.status !== VoiceConnectionStatus.Disconnected) {
         console.log('[VOICE 24/7] Already connected, skipping rejoin.');
+        clearScheduledVoiceRejoin();
         return;
       }
 
       const guild = client.guilds.cache.get(guildId);
       if (!guild) {
         console.log('[VOICE 24/7] Guild not found, retrying in 30s...');
-        setTimeout(() => tryRejoinVoice(guildId, channelId), 30000);
+        scheduleVoiceRejoin('guild-missing', 30000, { guildId, channelId });
         return;
       }
       const channel = guild.channels.cache.get(channelId);
       if (!channel) {
         console.log('[VOICE 24/7] Channel not found, retrying in 30s...');
-        setTimeout(() => tryRejoinVoice(guildId, channelId), 30000);
+        scheduleVoiceRejoin('channel-missing', 30000, { guildId, channelId });
         return;
       }
       console.log(`[VOICE 24/7] 🔄 Auto-rejoining voice: ${channel.name}`);
       joinAndWatch(channelId, guildId, guild.voiceAdapterCreator);
+      clearScheduledVoiceRejoin();
     } catch (e) {
       console.error('[VOICE 24/7] Auto-rejoin failed:', e.message);
-      // Retry in 15s
-      setTimeout(() => {
-        if (savedVoiceState) {
-          tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
-        }
-      }, 15000);
+      scheduleVoiceRejoin('rejoin-failed', 15000, { guildId, channelId });
+    } finally {
+      isVoiceRejoinInProgress = false;
     }
   }
 
   client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
+    runtimeState.discord.ready = true;
+    runtimeState.discord.readyAt = new Date().toISOString();
+    runtimeState.discord.lastLoginError = null;
     await setBotCustomStatus('lagi akong nandito para sa inyo');
     startScheduledGreetings();
-    startKeepAlive();
 
     // =====================================================================
     // 24/7 AUTO-JOIN ON STARTUP — load saved voice state from DB
@@ -809,12 +961,10 @@ const {
     try {
       const dbState = await loadVoiceStateFromDB();
       if (dbState && dbState.guildId && dbState.channelId) {
-        savedVoiceState = { guildId: dbState.guildId, channelId: dbState.channelId };
+        setSavedVoiceState({ guildId: dbState.guildId, channelId: dbState.channelId });
         console.log(`[VOICE 24/7] 🚀 Auto-joining saved voice channel on startup...`);
         // Small delay to let Discord gateway stabilize
-        setTimeout(() => {
-          tryRejoinVoice(dbState.guildId, dbState.channelId);
-        }, 3000);
+        scheduleVoiceRejoin('startup', 3000, { guildId: dbState.guildId, channelId: dbState.channelId });
       } else {
         console.log('[VOICE 24/7] No saved voice state found. Waiting for j!join command.');
       }
@@ -831,26 +981,10 @@ const {
       const connection = getVoiceConnection(savedVoiceState.guildId);
       if (!connection || connection.state.status === 'destroyed' || connection.state.status === 'disconnected') {
         console.log('[VOICE 24/7] ❗ Health check: NOT connected! Rejoining...');
-        tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
+        scheduleVoiceRejoin('health-check', 1500);
       }
-    }, 30000); // every 30 seconds
+    }, 30000).unref?.(); // every 30 seconds
   });
-
-  // Keep-alive ping every 10 minutes so Render free tier stays up
-  function startKeepAlive() {
-    setInterval(() => {
-      try {
-        const mod = RENDER_URL.startsWith('https') ? https : http;
-        mod.get(RENDER_URL, (res) => {
-          console.log(`[Keep-alive] Pinged ${RENDER_URL} - status: ${res.statusCode}`);
-        }).on('error', (err) => {
-          console.error('[Keep-alive] Ping error:', err.message);
-        });
-      } catch (e) {
-        console.error('[Keep-alive] Failed to ping:', e.message);
-      }
-    }, 10 * 60 * 1000);
-  }
 
   async function collectActiveMembersForChannel(channel) {
     if (!channel || !channel.guild) return [];
@@ -1334,7 +1468,7 @@ const {
             }
           }
 
-          savedVoiceState = { channelId: voiceChannel.id, guildId: voiceChannel.guild.id };
+          setSavedVoiceState({ channelId: voiceChannel.id, guildId: voiceChannel.guild.id });
           // Save to DB for 24/7 persistence across restarts
           await saveVoiceStateToDB(voiceChannel.guild.id, voiceChannel.id);
           voiceReconnectAttempts = 0;
@@ -1355,7 +1489,8 @@ const {
             await message.reply('Wala naman ako sa kahit anong voice channel ngayon, mare.');
             return;
           }
-          savedVoiceState = null;
+          setSavedVoiceState(null);
+          clearScheduledVoiceRejoin();
           // Clear from DB so bot doesn't auto-rejoin on restart
           await clearVoiceStateFromDB();
           connection.destroy();
@@ -1720,58 +1855,6 @@ const {
           await message.reply({ embeds: [adminEmbed] });
           return;
         }
-
-
-
-
-        // j!view
-        if (command === 'view') {
-          const targetMember =
-            message.mentions.members && message.mentions.members.first()
-              ? message.mentions.members.first()
-              : message.member;
-
-          if (!targetMember) {
-            await message.reply('Loka-loka, wala akong ma-view na tao. I-mention mo kung sino titignan natin.');
-            return;
-          }
-
-          const presence = targetMember.presence;
-          const status = presence && presence.status ? presence.status : 'offline';
-
-          let prettyStatus = 'offline';
-          if (status === 'online') prettyStatus = 'online, ready for chika';
-          else if (status === 'idle') prettyStatus = 'idle, baka nagkakape lang';
-          else if (status === 'dnd') prettyStatus = 'do not disturb, wag muna guluhin';
-
-          const displayName = targetMember.displayName || targetMember.user.username;
-          const user = targetMember.user || targetMember;
-          const avatarUrl = user.displayAvatarURL ? user.displayAvatarURL({ size: 512 }) : null;
-
-          const descriptionLines = [
-            `Eto na si ${displayName}, isa sa mga certified characters ng server na to.`,
-            `Status ngayon: ${prettyStatus}.`
-          ];
-
-          if (message.guild) {
-            const key = `${message.guild.id}:${user.id}`;
-            if (userCustomStatus.has(key)) {
-              const note = userCustomStatus.get(key);
-              descriptionLines.push(`Bubble status niya dito: ${note}.`);
-            }
-          }
-
-          const embed = new EmbedBuilder()
-            .setTitle(`Chika profile ni ${displayName}`)
-            .setDescription(descriptionLines.join('\n'))
-            .setColor(0xff66cc);
-
-          if (avatarUrl) embed.setImage(avatarUrl);
-
-          await message.reply({ embeds: [embed] });
-          return;
-        }
-
         // j!test
         if (command === 'test') {
           const now = getNowInPhilippines();
@@ -1996,18 +2079,14 @@ const {
         if (wasInChannel && !nowInChannel && savedVoiceState) {
           // Bot was KICKED or DISCONNECTED from voice — rejoin immediately!
           console.log(`[VOICE 24/7] 🚨 BOT WAS KICKED/DISCONNECTED! Rejoining in 3s...`);
-          setTimeout(() => {
-            if (savedVoiceState) {
-              tryRejoinVoice(savedVoiceState.guildId, savedVoiceState.channelId);
-            }
-          }, 3000);
+          scheduleVoiceRejoin('bot-kicked', 3000);
           return;
         }
 
         if (wasInChannel && nowInChannel && wasInChannel !== nowInChannel && savedVoiceState) {
           // Bot was MOVED to another channel — update saved state and stay
           console.log(`[VOICE 24/7] Bot was moved to channel ${nowInChannel}. Updating saved state.`);
-          savedVoiceState = { guildId, channelId: nowInChannel };
+          setSavedVoiceState({ guildId, channelId: nowInChannel });
           await saveVoiceStateToDB(guildId, nowInChannel);
           return;
         }
@@ -2083,19 +2162,9 @@ const {
 
   // Login AFTER sodium is ready and events are registered
   client.login(DISCORD_TOKEN).catch((err) => {
+    runtimeState.discord.lastLoginError = err.message;
     console.error('Failed to login to Discord:', err.message);
     process.exit(1);
-  });
-
-  // Minimal HTTP server so Render sees a healthy app
-  const PORT = process.env.PORT || 3000;
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('JanJan Discord bot is running.\n');
-  });
-
-  server.listen(PORT, () => {
-    console.log(`HTTP status server listening on port ${PORT}`);
   });
 
 })(); // End of async IIFE
