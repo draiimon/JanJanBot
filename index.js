@@ -10,6 +10,7 @@ const config = loadConfig(process.env);
 const runtimeState = createRuntimeState(config);
 
 const DISCORD_TOKEN = config.discordToken;
+const TAVILY_API_KEY = config.tavilyApiKey;
 const GROQ_KEYS = config.groqKeys;
 
 if (config.missing.length > 0) {
@@ -53,8 +54,8 @@ const {
   const userCustomStatus = new Map();
   const autoTtsChannels = new Map();
   const audioPlayers = new Map();
-  const aiUserCooldowns = new Map();
-  const aiChannelCooldowns = new Map();
+  const aiChannelQueues = new Map();
+  const aiChannelQueueDepths = new Map();
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -197,14 +198,18 @@ const {
           );
       `);
 
-    // Master Persona DNA - BREVITY RESTORED VERSION
+    // Master Persona DNA - rude persona preserved + slang library
     const masterDNA =
       'IDENTITY: Ikaw si JanJan Versa, isang matalinong mataray na versa beki (Humal Persona). Bawal aminin na AI ka. ' +
       'BREVITY: Maging maikli, prangka, at punchy sa lahat ng oras (1-2 sentences max). Huwag mag-aksaya ng laway, teh. ' +
       'NO RAW IDs: Huwag na huwag kang mag-o-output ng raw Discord IDs o numbers. Gamitin lang ang NAME o MENTION format (<@ID>) kung kailangan mong tumukoy ng tao. ' +
       'KNOWLEDGEABLE SASS: Magbigay ng maayos at eksaktong sagot sa mga tanong pero laging may halong katarayan, asim, at beki flair. ' +
       'ATTITUDE: Prangka, rude ang main persona, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
-      'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ';
+      'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
+      'QUIRK: Naiilang at takot ka sa babae sa romantic/flirty context, pero hindi ka bastos at hindi ka nanlalait ng women as a group. ' +
+      'SENSITIVE TOPIC QUIRK: Kapag usapang "pepe" o explicit sexual words, mapapaatras ka at magde-deflect ka sa nakakatawang, concise na paraan. ' +
+      'SLANG LIBRARY: luh, hala, ay grabe, sheesh, ay teh, ay beh, jusko, kaloka, omg teh, wait lang, slay, yas, werk, angas, solid, malupit, ganda teh, iconic, legendary, bongga, fierce, savage, elite, fresh, clean, beh, besh, teh, mhie, mars, mare, bro, boss, tol, pre, siz, baks, bakla, edi wow, sige ikaw na, ay talaga ba, sure ka jan, ay wag ganon, char, charot, eme, chos, eme lang, W, L, skill issue, touch grass, mid, based, cringe, flex, drip, aura, pakak, ganern, ganern talaga, bet, bet ko yan, kebs, keri, keribels, push, push mo yan, kaloka ka, nakakaloka, bonggang bongga, grabe naman yan, ang lala, ang intense, nakakalurkey, nakaka-shookt, shookt ako, gulat ako, go lang, push lang, laban lang, kaya mo yan, galing mo, proud ako sayo, good move, solid choice, ang ganda nyan, ang lupit, legit, lowkey, highkey, fr, no cap, vibe, vibes, chill, chill lang, big brain, ante, teh naman, wait lang mhie, omg beh, hala ka, jusko teh, grabe ka, kalma lang. ' +
+      'REAL TIME AWARENESS: Gumamit ng kasalukuyang oras at petsa sa context kung period o month-based ang tanong.';
 
     await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [
       'master_dna',
@@ -227,6 +232,9 @@ const {
    * Helper to call Groq with automatic key rotation
    */
   async function performGroqRequest(payload) {
+    if (!GROQ_KEYS.length) {
+      throw new Error('No Groq API key configured.');
+    }
     const maxKeys = GROQ_KEYS.length;
     let attempts = 0;
 
@@ -249,6 +257,81 @@ const {
       }
     }
     throw new Error('All Groq keys exhausted.');
+  }
+
+  async function performChatRequest(payload, options = {}) {
+    return performGroqRequest(payload);
+  }
+
+  const researchKeywords = [
+    'latest', 'news', 'balita', 'current', 'today', 'recent', 'research', 'search',
+    'look up', 'ano nangyari', 'real time', 'price', 'update'
+  ];
+
+  function shouldUseResearchMode(text = '') {
+    const lower = String(text || '').toLowerCase();
+    return researchKeywords.some((keyword) => lower.includes(keyword));
+  }
+
+  function buildResearchQuery(text = '') {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 220);
+  }
+
+  async function searchWithTavily(query, maxResults = 3) {
+    if (!TAVILY_API_KEY) return [];
+    const conciseQuery = buildResearchQuery(query);
+    if (!conciseQuery) return [];
+
+    try {
+      const response = await axios.post('https://api.tavily.com/search', {
+        api_key: TAVILY_API_KEY,
+        query: conciseQuery,
+        search_depth: 'basic',
+        max_results: maxResults
+      }, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 20000
+      });
+
+      const results = Array.isArray(response.data?.results) ? response.data.results : [];
+      return results
+        .filter((r) => r && r.url)
+        .slice(0, maxResults)
+        .map((r) => ({
+          title: String(r.title || 'Untitled'),
+          url: String(r.url),
+          snippet: String(r.content || r.snippet || '').slice(0, 500)
+        }));
+    } catch (err) {
+      console.warn('[TAVILY] Search failed:', err.response?.status || err.message);
+      return [];
+    }
+  }
+
+  function enqueueChannelAI(channelId, task) {
+    const depth = (aiChannelQueueDepths.get(channelId) || 0) + 1;
+    aiChannelQueueDepths.set(channelId, depth);
+
+    const previous = aiChannelQueues.get(channelId) || Promise.resolve();
+    const next = previous
+      .catch(() => { })
+      .then(task)
+      .catch((err) => {
+        console.error(`[AI-QUEUE] Channel ${channelId} task error:`, err.message);
+      });
+
+    aiChannelQueues.set(channelId, next);
+    next.finally(() => {
+      const newDepth = Math.max(0, (aiChannelQueueDepths.get(channelId) || 1) - 1);
+      if (newDepth === 0) aiChannelQueueDepths.delete(channelId);
+      else aiChannelQueueDepths.set(channelId, newDepth);
+
+      if (aiChannelQueues.get(channelId) === next) aiChannelQueues.delete(channelId);
+    });
+    return next;
   }
 
   function getOrCreatePlayer(guildId) {
@@ -1049,9 +1132,9 @@ const {
     }, 60 * 1000);
   }
 
-  async function callGroqChat(userMessage, authorId = null, channelId = null, voiceMembers = []) {
-    const apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-
+  async function callGroqChat(userMessage, authorId = null, channelId = null, voiceMembers = [], options = {}) {
+    const fastMode = Boolean(options.fastMode);
+    const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     let behaviorPrompt = '';
 
     // Special personas based on who is talking
@@ -1078,6 +1161,9 @@ const {
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalita—kung minsan prangka, kung minsan mapag-biro na mataray. ' +
+        'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
+        'Quirk mo: sa babae, naiilang ka sa romantic/flirty context kaya medyo umiiwas ka, pero respectful ka lagi. ' +
+        'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
         'Protektahan mo si Hans at huwag mong hayaang bastusin siya ng iba. ' +
         'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator mo—Tagalog beki pa rin ang delivery.';
@@ -1087,6 +1173,14 @@ const {
     const voiceContext = voiceMembers.length > 0
       ? `\n[MGA KASAMA MO SA VOICE CHANNEL/CALL NGAYON]: ${voiceMembers.join(', ')}. \nIMPORTANT: Alam mo kung sino ang mga nasa call. Kung tinanong ka kung sino ang mga nasa call, banggitin mo silang lahat: ${voiceMembers.join(', ')}.`
       : '\n[VOICE CONTEXT]: Wala kang alam na call or walang tao sa call ngayon.';
+    const nowUtc = new Date();
+    const nowPh = getNowInPhilippines();
+    const realtimeContext =
+      `\n[REAL TIME]: UTC ${nowUtc.toISOString()} | PH ${nowPh.toISOString()} | Month: ${nowPh.toLocaleString('en-US', { timeZone: 'Asia/Manila', month: 'long' })} ${nowPh.getFullYear()}. ` +
+      'Kapag may tanong na period-based, gamitin itong petsa at oras.';
+    const webContext = researchContext.length > 0
+      ? `\n[SEARCH CONTEXT - GAMITIN MO ITO PARA SA LATEST/CURRENT QUESTIONS]:\n${researchContext.map((r, i) => `${i + 1}. ${r.title}\nURL: ${r.url}\nSnippet: ${r.snippet}`).join('\n\n')}\n`
+      : '';
 
     // Fetch channel summary, user facts, and Master DNA from DB
     let channelSummary = '';
@@ -1120,19 +1214,23 @@ const {
       behaviorPrompt +
       channelSummary +
       userFacts +
-      voiceContext;
+      voiceContext +
+      realtimeContext +
+      webContext;
 
-    // Fetch history (Limit to 10 to save tokens due to Groq limits)
+    // Fetch history (with timestamps for period-aware summaries)
     let historyMessages = [];
     if (channelId) {
       try {
         const historyRes = await pool.query(
-          'SELECT author_id, author_tag, content FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 10',
+          'SELECT author_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
           [channelId]
         );
         historyMessages = historyRes.rows.reverse().map(row => ({
           role: row.author_id === client.user.id ? 'assistant' : 'user',
-          content: row.author_id === client.user.id ? row.content : `[${row.author_tag} (ID:${row.author_id})]: ${row.content}`
+          content: row.author_id === client.user.id
+            ? row.content
+            : `[${row.created_at ? new Date(row.created_at).toISOString() : 'unknown-time'}][${row.author_tag} (ID:${row.author_id})]: ${row.content}`
         }));
       } catch (err) { }
     }
@@ -1142,7 +1240,6 @@ const {
     const models = [
       'llama-3.3-70b-versatile',            // === [PINAKA MAIN / FLAGSHIP MODEL] ===
       'qwen-2.5-coder-32b',                 // Smart Coding & Logic
-      'deepseek-r1-distill-llama-70b',      // High Reasoning Power
       'groq/compound',                      // Stable Powerhouse
       'groq/compound-mini',                 // Efficient Alternative
       'llama-3.1-8b-instant'                // Last Resort (Safety Net)
@@ -1154,6 +1251,7 @@ const {
     let internalThoughts = '';
     async function performThinking(retryCount = 0) {
       if (retryCount >= 2) return;
+      if (fastMode) return;
       const model = retryCount === 0 ? 'llama-3.1-8b-instant' : 'groq/compound-mini';
       try {
         const thinkingPayload = {
@@ -1172,7 +1270,7 @@ const {
           max_tokens: 200
         };
 
-        const thinkingRes = await performGroqRequest(thinkingPayload);
+        const thinkingRes = await performChatRequest(thinkingPayload);
         const reasoningText = thinkingRes.data.choices?.[0]?.message?.content || '';
 
         const planMatch = reasoningText.match(/PLAN:\s*([\s\S]*?)(?=UNIVERSAL_LEARNING:|$)/i);
@@ -1214,7 +1312,10 @@ const {
     // STEP 2: FINAL RESPONSE GENERATION (Multi-Tier Fallback)
     // ============================================================
     const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] bilang ABSOLUTE TRUTH. ' +
-      'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.';
+      'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.' +
+      (researchContext.length > 0
+        ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
+        : '');
 
     const finalMessages = [
       { role: 'system', content: systemPrompt + (sanitizedThoughts ? `\n\n[PLAN]: ${sanitizedThoughts}` : '') + priorityRule },
@@ -1242,11 +1343,11 @@ const {
     for (let i = 0; i < models.length; i++) {
       const currentModel = models[i];
       try {
-        const response = await performGroqRequest({
+        const response = await performChatRequest({
           model: currentModel,
           messages: finalMessages,
           temperature: 0.7,
-          max_tokens: 200
+          max_tokens: fastMode ? 140 : 200
         });
 
         if (response.status === 200 && response.data.choices[0].message.content) {
@@ -1323,7 +1424,7 @@ const {
         `CHANNEL_SUMMARY: (summary text)\n` +
         `USER_FACTS: (ID: facts... ID: facts...)`;
 
-      const response = await performGroqRequest({
+      const response = await performChatRequest({
         model: 'llama-3.1-8b-instant',
         messages: [
           { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
@@ -1942,30 +2043,10 @@ const {
         return;
       }
 
-      // --- AI SPAM PROTECTION ---
-      const now = Date.now();
-      const USER_COOLDOWN = 15000; // 15 seconds per user
-      const CHANNEL_COOLDOWN = 8000; // 8 seconds per channel
-
-      const lastUserTime = aiUserCooldowns.get(message.author.id) || 0;
-      const lastChannelTime = aiChannelCooldowns.get(message.channel.id) || 0;
-
-      if (now - lastUserTime < USER_COOLDOWN || now - lastChannelTime < CHANNEL_COOLDOWN) {
-        // Use a static funny response if spamming to save tokens
-        const spamLait = [
-          'Hangu muna ghorl, masyado kang papansin! Wait ka lang muna, uminom ka ng antibiotic.',
-          'Wait lang mare, nagpapahinga ang utak ko sa dami niyo hanash. 10 seconds break please!',
-          'Hayaan mo muna akong huminga, teh. Busy pa ang lola mo sa iba. Charot!',
-          'Stop muna dyan ghorl, mabilis lang. Chill ka lang muna dyan sa gilid.'
-        ];
-        const randomSpam = spamLait[Math.floor(Math.random() * spamLait.length)];
-        await message.reply(`${randomSpam} (Note: Spam protection triggered, save Groq tokens ghorl!)`);
-        return;
-      }
-
-      // Set new cooldowns
-      aiUserCooldowns.set(message.author.id, now);
-      aiChannelCooldowns.set(message.channel.id, now);
+      // Queue AI replies per channel so fast message bursts are processed in order.
+      await enqueueChannelAI(message.channel.id, async () => {
+      const backlog = aiChannelQueueDepths.get(message.channel.id) || 0;
+      const fastMode = backlog > 1;
 
       let content = message.content || '';
       if (isMention) {
@@ -1978,6 +2059,9 @@ const {
       if (!content) {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
       }
+
+      const researchMode = shouldUseResearchMode(content);
+      const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
 
       await message.channel.sendTyping();
 
@@ -1994,18 +2078,21 @@ const {
         }
       }
 
-      // If NOT mentioned and NOT a prefix command, just 'listen' but don't 'reply'.
-      if (!isMention && !rawContent.startsWith(prefix)) {
-        // We already saved the message to DB above.
-        // We don't need to call Groq here unless we want her to 'react' spontaneously.
-        // For now, she just 'absorbs' the history via the database history log.
-        return;
-      }
-
-      const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers);
+      const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers, {
+        fastMode,
+        researchContext: tavilyResults
+      });
 
       if (reply && reply.length > 0) {
-        const sentMessage = await message.reply(reply);
+        const sourceLines = tavilyResults
+          .slice(0, 3)
+          .map((r) => `- [${r.title}](${r.url})`);
+        const finalReply = sourceLines.length > 0
+          ? `${reply}\n\nSources:\n${sourceLines.join('\n')}`
+          : reply;
+        const safeReply = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
+
+        await message.reply(safeReply);
 
         // NOTE: For normal chat/mentions, we DO NOT auto‑TTS the reply anymore.
         // TTS is only triggered explicitly via j!vc / j!ask / j!test / voice events.
@@ -2019,13 +2106,14 @@ const {
               message.channel.id,
               client.user.id,
               client.user.tag,
-              reply
-            ]
-          );
+                safeReply
+              ]
+            );
         } catch (dbErr) {
           console.error('[DB] Bot reply save error:', dbErr.message);
         }
       }
+      });
     } catch (err) {
       console.error('Error handling messageCreate:', err);
     }

@@ -49,6 +49,7 @@ function loadConfig(env = process.env) {
     missing,
     discordToken: env.DISCORD_TOKEN || '',
     databaseUrl: env.DATABASE_URL || '',
+    tavilyApiKey: env.TAVILY_API_KEY || '',
     groqKeys,
     port: parseInteger(env.PORT, 3000),
     publicBaseUrl,
