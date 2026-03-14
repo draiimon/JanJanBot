@@ -753,9 +753,6 @@ const {
     const requestedNames = extractRequestedMemberNames(rawText);
     const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring || requestedNames.length > 0;
     let hasIntent = isNaturalVoiceMoveIntent(rawText) || aiIntent.move || shouldBring;
-    if (!hasIntent && hasVoiceMoveCueWords(rawText)) {
-      hasIntent = true;
-    }
     if (!hasIntent && channelIdFromText) {
       hasIntent = true;
     }
@@ -2848,11 +2845,6 @@ const {
 
       }
 
-      if (!rawContent.startsWith(prefix)) {
-        const movedByNaturalChat = await tryNaturalVoiceMoveFromChat(message, rawContent);
-        if (movedByNaturalChat) return;
-      }
-
       // Mention or reply-to-bot triggers AI chat
       const isMention = message.mentions.has(me);
 
@@ -2866,6 +2858,11 @@ const {
         } catch {
           // ignore
         }
+      }
+
+      if (!rawContent.startsWith(prefix) && (isMention || isReplyToBot)) {
+        const movedByNaturalChat = await tryNaturalVoiceMoveFromChat(message, rawContent);
+        if (movedByNaturalChat) return;
       }
 
       if (!isMention && !isReplyToBot) {
