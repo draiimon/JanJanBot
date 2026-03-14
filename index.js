@@ -1135,6 +1135,15 @@ const {
 
     let ambientLine = null;
     try {
+      const recent = await message.channel.messages.fetch({ limit: 10 }).catch(() => null);
+      const convoContext = recent
+        ? [...recent.values()]
+            .filter((m) => !m.author?.bot)
+            .slice(0, 8)
+            .map((m) => `${m.member?.displayName || m.author?.globalName || m.author?.username || 'unknown'}: ${(m.content || '').replace(/\s+/g, ' ').slice(0, 120)}`)
+            .join(' || ')
+        : rawText;
+      const anchorKeywords = extractContextKeywords(convoContext, 6).join(', ') || 'none';
       const aiRes = await performChatRequest({
         model: 'llama-3.1-8b-instant',
         messages: [
@@ -1142,19 +1151,23 @@ const {
             role: 'system',
             content:
               'You are JanJan, rude Taglish beki. Output one short ambient interjection, max 12 words. ' +
-              'Playful/maldita, no explanation.'
+              'Playful/maldita, no explanation. Stay on-topic with current convo.'
           },
           {
             role: 'user',
-            content: `Conversation trigger: ${rawText.slice(0, 200)}`
+            content:
+              `Conversation trigger: ${rawText.slice(0, 200)}\n` +
+              `Recent convo context: ${convoContext.slice(0, 700)}\n` +
+              `Topic keywords: ${anchorKeywords}`
           }
         ],
-        temperature: 1.0,
+        temperature: 0.55,
         max_tokens: 40
       });
       ambientLine = aiRes.data?.choices?.[0]?.message?.content?.trim() || null;
       if (ambientLine) {
         ambientLine = ambientLine.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+        if (!isReplyLooseRelevant(ambientLine, convoContext)) ambientLine = null;
       }
     } catch {
       ambientLine = null;
@@ -1216,6 +1229,7 @@ const {
 
             let epal = null;
             try {
+              const anchorKeywords = extractContextKeywords(recentHuman, 6).join(', ') || 'none';
               const aiRes = await performChatRequest({
                 model: 'llama-3.1-8b-instant',
                 messages: [
@@ -1223,18 +1237,23 @@ const {
                     role: 'system',
                     content:
                       'You are JanJan, rude Taglish beki. Create one short chismis interjection based on recent conversation context. ' +
-                      'Max 12 words. Epal/funny/mataray tone. No explanation.'
+                      'Max 12 words. Epal/funny/mataray tone. No explanation. Stay on-topic.'
                   },
                   {
                     role: 'user',
-                    content: `Recent convo: ${recentHuman || 'none'}`
+                    content:
+                      `Recent convo: ${recentHuman || 'none'}\n` +
+                      `Topic keywords: ${anchorKeywords}`
                   }
                 ],
-                temperature: 0.85,
+                temperature: 0.55,
                 max_tokens: 45
               });
               epal = aiRes.data?.choices?.[0]?.message?.content?.trim() || null;
-              if (epal) epal = epal.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+              if (epal) {
+                epal = epal.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+                if (!isReplyLooseRelevant(epal, recentHuman)) epal = null;
+              }
             } catch {
               epal = null;
             }
@@ -1298,6 +1317,33 @@ const {
     };
     const list = pools[mood] || pools.neutral;
     return list[Math.floor(Math.random() * list.length)];
+  }
+
+  function extractContextKeywords(text = '', max = 6) {
+    const stop = new Set([
+      'ang', 'mga', 'yung', 'tapos', 'pero', 'kasi', 'lang', 'naman', 'saka', 'dito', 'diyan', 'kayo',
+      'ako', 'ikaw', 'siya', 'kami', 'tayo', 'nila', 'nila', 'ito', 'iyan', 'yan', 'to', 'na', 'ng',
+      'sa', 'at', 'or', 'the', 'a', 'an', 'is', 'are', 'of', 'for', 'with', 'from', 'that', 'this',
+      'janjan', 'jan', 'josh'
+    ]);
+    const tokens = String(text || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !stop.has(w));
+    const freq = new Map();
+    for (const t of tokens) freq.set(t, (freq.get(t) || 0) + 1);
+    return [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, max)
+      .map(([w]) => w);
+  }
+
+  function isReplyLooseRelevant(reply = '', context = '') {
+    const keywords = extractContextKeywords(context, 6);
+    if (keywords.length === 0) return true;
+    const lower = String(reply || '').toLowerCase();
+    return keywords.some((k) => lower.includes(k));
   }
 
   function getOrCreatePlayer(guildId) {
