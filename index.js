@@ -567,29 +567,45 @@ const {
     );
   }
 
-  async function detectVoiceMoveIntentWithAI(text) {
+  async function detectVoiceMoveIntentWithAI(text, candidateChannels = []) {
     try {
+      const names = candidateChannels.map((ch) => ch.name).filter(Boolean).slice(0, 20).join(', ') || 'none';
       const res = await performChatRequest({
         model: 'llama-3.1-8b-instant',
         messages: [
           {
             role: 'system',
             content:
-              'You classify user intent. Reply ONLY YES or NO. ' +
-              'YES if user is telling the bot to move/follow/switch voice channel.'
+              'Classify voice move command intent for a Discord bot. ' +
+              'Reply STRICTLY in one line format: MOVE=<YES|NO>;TARGET=<UP|DOWN|FOLLOW|NAME|NONE>;CHANNEL=<name-or-empty>;BRING=<YES|NO>. ' +
+              'FOLLOW means user wants bot to follow speaker/current user VC. ' +
+              'UP/DOWN means relative move in VC list. NAME means specific channel target.'
           },
           {
             role: 'user',
-            content: String(text || '').slice(0, 280)
+            content:
+              `Text: ${String(text || '').slice(0, 260)}\n` +
+              `Known VC names: ${names}`
           }
         ],
         temperature: 0,
-        max_tokens: 3
+        max_tokens: 60
       });
-      const raw = (res.data?.choices?.[0]?.message?.content || '').toUpperCase();
-      return raw.includes('YES');
+      const raw = (res.data?.choices?.[0]?.message?.content || '').trim();
+      const upper = raw.toUpperCase();
+      const move = /MOVE\s*=\s*YES/.test(upper);
+      const targetMatch = upper.match(/TARGET\s*=\s*(UP|DOWN|FOLLOW|NAME|NONE)/);
+      const bring = /BRING\s*=\s*YES/.test(upper);
+      const channelMatch = raw.match(/CHANNEL\s*=\s*([^;]+)/i);
+      const channelName = channelMatch ? channelMatch[1].trim() : '';
+      return {
+        move,
+        target: targetMatch ? targetMatch[1] : 'NONE',
+        bring,
+        channelName
+      };
     } catch {
-      return false;
+      return { move: false, target: 'NONE', bring: false, channelName: '' };
     }
   }
 
@@ -626,9 +642,12 @@ const {
 
   async function tryNaturalVoiceMoveFromChat(message, rawText) {
     if (!message.guild) return false;
-    let hasIntent = isNaturalVoiceMoveIntent(rawText);
+    const candidates = listMoveCandidateVoiceChannels(message.guild);
+    if (candidates.length === 0) return false;
+    const aiIntent = await detectVoiceMoveIntentWithAI(rawText, candidates);
+    let hasIntent = isNaturalVoiceMoveIntent(rawText) || aiIntent.move;
     if (!hasIntent && hasVoiceMoveCueWords(rawText)) {
-      hasIntent = await detectVoiceMoveIntentWithAI(rawText);
+      hasIntent = true;
     }
     if (!hasIntent) return false;
 
@@ -637,8 +656,6 @@ const {
     if (!connection || !botVC) return false;
 
     const lower = (rawText || '').toLowerCase();
-    const candidates = listMoveCandidateVoiceChannels(message.guild);
-    if (candidates.length === 0) return false;
 
     let target = null;
     const mentionedVoiceChannel = message.mentions.channels.find(
@@ -648,14 +665,25 @@ const {
       target = mentionedVoiceChannel;
     }
 
-    if (!target && (lower.includes('sa baba') || lower.includes('ibaba'))) {
+    if (!target && (
+      lower.includes('sa baba') ||
+      lower.includes('ibaba') ||
+      lower.includes('pababa') ||
+      aiIntent.target === 'DOWN'
+    )) {
       const pool = candidates.filter((ch) => ch.parentId === botVC.parentId);
       const source = pool.length > 0 ? pool : candidates;
       const idx = source.findIndex((ch) => ch.id === botVC.id);
       if (idx >= 0 && idx < source.length - 1) target = source[idx + 1];
     }
 
-    if (!target && (lower.includes('sa taas') || lower.includes('itaas'))) {
+    if (!target && (
+      lower.includes('sa taas') ||
+      lower.includes('itaas') ||
+      lower.includes('pakyat') ||
+      lower.includes('papakyat') ||
+      aiIntent.target === 'UP'
+    )) {
       const pool = candidates.filter((ch) => ch.parentId === botVC.parentId);
       const source = pool.length > 0 ? pool : candidates;
       const idx = source.findIndex((ch) => ch.id === botVC.id);
@@ -663,10 +691,23 @@ const {
     }
 
     // "dito" / "sumunod ka" means follow the message author's current VC
-    if (!target && (lower.includes('dito') || lower.includes('sumunod ka') || lower.includes('sunod ka'))) {
+    if (!target && (
+      lower.includes('dito') ||
+      lower.includes('sumunod ka') ||
+      lower.includes('sunod ka') ||
+      aiIntent.target === 'FOLLOW'
+    )) {
       const authorVC = message.member?.voice?.channel || null;
       if (authorVC && authorVC.id !== botVC.id) {
         target = authorVC;
+      }
+    }
+
+    if (!target && aiIntent.target === 'NAME' && aiIntent.channelName) {
+      target = candidates.find((ch) => (ch.name || '').toLowerCase() === aiIntent.channelName.toLowerCase()) || null;
+      if (!target) {
+        const normalized = aiIntent.channelName.toLowerCase();
+        target = candidates.find((ch) => (ch.name || '').toLowerCase().includes(normalized)) || null;
       }
     }
 
@@ -687,7 +728,8 @@ const {
       joinAndWatch(target.id, message.guild.id, message.guild.voiceAdapterCreator);
 
       let movedNames = [];
-      if (shouldBringMentionedMembers(rawText) && message.mentions?.users?.size > 0) {
+      const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring;
+      if (shouldBring && message.mentions?.users?.size > 0) {
         const mentionedIds = [...message.mentions.users.keys()].filter(
           (id) => id !== client.user.id
         );
