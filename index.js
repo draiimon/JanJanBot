@@ -327,7 +327,7 @@ const {
           {
             role: 'system',
             content:
-              'You are JanJan, a concise Taglish maldita persona. ' +
+              'You are JanJan or Josh, a concise Taglish maldita persona. ' +
               'Task: produce ONE short shutdown line (max 18 words) for a sexually explicit/bastos user message. ' +
               'Style: direct, mataray, witty, confident. ' +
               'Rules: do NOT escalate sexual content, do NOT flirt, do NOT include explicit words, do NOT be polite.'
@@ -517,19 +517,19 @@ const {
     const lower = String(text || '').toLowerCase();
     if (!lower) return false;
     return (
-      lower.includes('flirt') ||
-      lower.includes('landi') ||
-      lower.includes('landi mo') ||
-      lower.includes('crush') ||
-      lower.includes('baby') ||
-      lower.includes('babe') ||
-      lower.includes('love') ||
-      lower.includes('mahal') ||
-      lower.includes('kiss') ||
-      lower.includes('date') ||
-      lower.includes('jowa') ||
-      lower.includes('poging') ||
-      lower.includes('ganda mo')
+      lower.includes('fuck me') ||
+      lower.includes('isa pa!') ||
+      lower.includes('birahin kita') ||
+      lower.includes('laplap mo ko?') ||
+      lower.includes('ungol') ||
+      lower.includes('lakasan mo pa') ||
+      lower.includes('harder!') ||
+      lower.includes('jabolin mo ko') ||
+      lower.includes('gusto mo yan ha? ') ||
+      lower.includes('ugh shit!') ||
+      lower.includes('kantutin mo ko') ||
+      lower.includes('kantot mo ko dadeh') ||
+      lower.includes('sarap mo gago')
     );
   }
 
@@ -3105,7 +3105,3 @@ const {
   });
 
 })(); // End of async IIFE
-
-
-
-
