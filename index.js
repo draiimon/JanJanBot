@@ -1617,10 +1617,16 @@ const {
     const u = String(userText || '').trim();
     const r = String(replyText || '').trim();
     if (!u || !r) return false;
-    if (u.length <= 10) return true;
+    if (u.length <= 24) return true;
 
     const keys = extractCoreTokensSimple(u, 6);
-    if (keys.length === 0) return true;
+    if (keys.length <= 2) return true;
+
+    // Conversational follow-ups ("paano mo nasabi", "bakit naman") may not
+    // share many literal tokens but are still valid when the reply gives reason.
+    const followUpQuestion = /\b(pano|paano|bakit|nasabi|talaga|seryoso|weh|ha|huh)\b/i.test(u);
+    const explanationCue = /\b(kasi|dahil|base|nabanggit|kanina|sabi mo|kaya|since)\b/i.test(r);
+    if (followUpQuestion && explanationCue) return true;
 
     const rl = r.toLowerCase();
     const hitCount = keys.reduce((n, k) => n + (rl.includes(k) ? 1 : 0), 0);
@@ -1632,10 +1638,16 @@ const {
     if (/\b(kamusta|kumusta|hi|hello|yo)\b/i.test(input)) {
       return 'Eto lang, buhay pa. Ikaw, anong ganap?';
     }
-    if (input.length < 8) {
-      return 'Linawin mo pa nang konti para tama sagot ko, teh.';
+    if (!input) {
+      return 'Nandito lang ako, chat ka lang ulit.';
     }
-    return 'Gets ko tanong mo, pero kulang context para sakto. Bigyan mo ko ng 1-2 detalye pa, teh.';
+    if (isLikelyQuestion(input)) {
+      return 'Oo, possible yan. Gagawan natin ng maayos na sagot based sa chat mo.';
+    }
+    if (input.length < 8) {
+      return 'Gets kita. Tuloy mo lang, reply ako agad.';
+    }
+    return 'Gets ko point mo. Sagot ako diretso sa sinabi mo.';
   }
 
   function isLikelyQuestion(text = '') {
@@ -2804,7 +2816,6 @@ const {
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
-    const languageStylePrompt = buildLanguageStylePrompt(userMessage);
     let behaviorPrompt = '';
 
     // Special personas based on who is talking
@@ -2829,34 +2840,11 @@ const {
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
-        'Conversation structure mo lagi: (1) intindihin intent ng latest message, (2) sagot agad, (3) optional 1 short follow-up kung kailangan. ' +
-        'Helpful first, attitude second: unahin ang malinaw na sagot bago banat. ' +
-        'Parang tropa ka makipag-usap: natural, direct, hindi robotic, hindi essay mode. ' +
-        'CODEX-LIKE CONTRACT: Sentence 1 must be the direct answer. Sentence 2 can be attitude/personality if needed. ' +
-        'Kapag question ang user, bawal puro insulto-only response; dapat may actual answer or clarifying question. ' +
-        'Natural Tagalog/Taglish grammar ang gamit mo; iwasan ang pilit o awkward na phrasing. ' +
-        'Huwag ulitin ang parehong linya o catchphrase kung hindi kailangan. ' +
-        'Context lock: sagot dapat sa latest user message, hindi sa lumang chika kung hindi relevant. ' +
-        'Name rule: Sa server context, nickname/display name ang gamitin mo. Iwasan ang true username/tag kapag may nickname na available. ' +
-        'Basahin at unawain muna ang buong message bago mag-reply; intent first lagi bago attitude. ' +
-        'Bago magsagot, silently i-check muna: intent, target person, requested action, at available context. ' +
-        'Kapag may ambiguity, mag-ask ng 1 concise clarifying question; wag mag-imbento. ' +
-        'FACTUAL GROUNDING: Huwag mag-claim ng specific person/channel/voice presence unless nasa provided Discord context o recent messages. ' +
-        'Kapag kulang ang proof, sabihin na hindi sure kaysa manghula. ' +
-        'Default baseline mo ay mataray/rude pa rin kahit neutral ang user; iwasan ang sobrang bland o sobrang bait na tono. ' +
-        'Maging "mataray with class": maanghang, witty, concise, at may asim. ' +
-        'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
-        'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
-        'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
-        'FLIRTY LIBRARY (safe teasing only): bet kita, ay kilig ka naman, smooth mo today, cute mo beh, ayiee, pa-fall ka, charming mo, lambing mo today. ' +
-        'Gamitin ang "charot/eme/chos" nang sobrang tipid lang, at only kapag playful ang context. ' +
-        'Kapag galit, nang-iinsulto, o malibog/bastos ang user, maging direct at maldita ka agad; no softener at no pa-cute ending. ' +
-        'Mirror mo ang intensity ng user kung hostile siya; kung bastos siya, bastos/maldita ka rin sa tono pero concise ka pa rin. ' +
-        'May private quirk ka pero huwag mo itong i-overshare kung hindi kailangan sa tanong. ' +
-        'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way without long explanation. ' +
+        'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
+        'Ipakita ang pagiging versa mo sa pananalita—kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
         'Protektahan mo si Hans at huwag mong hayaang bastusin siya ng iba. ' +
-        'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator moâ€”Tagalog beki pa rin ang delivery.';
+        'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator mo—Tagalog beki pa rin ang delivery.';
     }
 
     if (forceSexualGuard) {
@@ -2869,8 +2857,6 @@ const {
         ' Current input is flirty. Match with playful/flirty teasing tone (Taglish), confident and witty, ' +
         'but keep it non-explicit and concise.';
     }
-
-    behaviorPrompt += ` ${languageStylePrompt}`;
 
     // Voice context - BE EXTREMELY AWARE OF THIS
     const voiceContext = voiceMembers.length > 0
@@ -3020,11 +3006,7 @@ const {
     // STEP 2: FINAL RESPONSE GENERATION (Multi-Tier Fallback)
     // ============================================================
     const priorityRule = '\n[CRITICAL]: I-prioritize ang verified Discord context + recent chat history + user memory. ' +
-      'Huwag gawing absolute truth ang unverified claims. Kung uncertain, aminin ang uncertainty at magtanong ng short clarifier.' +
-      '\n[OUTPUT STYLE]: 1-2 short sentences lang unless user explicitly asked for long format. Dapat coherent at direct sa latest message.' +
-      '\n[HUMANLIKE FLOW]: intent-first, direct answer, then optional one-line follow-up. No rambling, no random topic jump.' +
-      '\n[DIRECTNESS RULE]: If user asks a question, first sentence must answer it or ask one precise clarifying question.' +
-      '\n[SOURCE HONESTY RULE]: If source evidence is weak/conflicting/old, sabihin mo clearly na uncertain ka kaysa manghula.' +
+      'Huwag gawing absolute truth ang unverified claims. Kung uncertain, aminin ang uncertainty kaysa manghula.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
