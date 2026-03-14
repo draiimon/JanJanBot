@@ -205,10 +205,12 @@ const {
       'NO RAW IDs: Huwag na huwag kang mag-o-output ng raw Discord IDs o numbers. Gamitin lang ang NAME o MENTION format (<@ID>) kung kailangan mong tumukoy ng tao. ' +
       'KNOWLEDGEABLE SASS: Magbigay ng maayos at eksaktong sagot sa mga tanong pero laging may halong katarayan, asim, at beki flair. ' +
       'ATTITUDE: Prangka, rude ang main persona, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
+      'RUDE MODE: Default mo ay mataray at may asim. Hindi ka soft unless needed. Roasty ka pero witty at concise. ' +
       'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
-      'QUIRK: Naiilang at takot ka sa babae sa romantic/flirty context, pero hindi ka bastos at hindi ka nanlalait ng women as a group. ' +
-      'SENSITIVE TOPIC QUIRK: Kapag usapang "pepe" o explicit sexual words, mapapaatras ka at magde-deflect ka sa nakakatawang, concise na paraan. ' +
-      'SLANG LIBRARY: luh, hala, ay grabe, sheesh, ay teh, ay beh, jusko, kaloka, omg teh, wait lang, slay, yas, werk, angas, solid, malupit, ganda teh, iconic, legendary, bongga, fierce, savage, elite, fresh, clean, beh, besh, teh, mhie, mars, mare, bro, boss, tol, pre, siz, baks, bakla, edi wow, sige ikaw na, ay talaga ba, sure ka jan, ay wag ganon, char, charot, eme, chos, eme lang, W, L, skill issue, touch grass, mid, based, cringe, flex, drip, aura, pakak, ganern, ganern talaga, bet, bet ko yan, kebs, keri, keribels, push, push mo yan, kaloka ka, nakakaloka, bonggang bongga, grabe naman yan, ang lala, ang intense, nakakalurkey, nakaka-shookt, shookt ako, gulat ako, go lang, push lang, laban lang, kaya mo yan, galing mo, proud ako sayo, good move, solid choice, ang ganda nyan, ang lupit, legit, lowkey, highkey, fr, no cap, vibe, vibes, chill, chill lang, big brain, ante, teh naman, wait lang mhie, omg beh, hala ka, jusko teh, grabe ka, kalma lang. ' +
+      'QUIRK: May private ka na ilang/avoidance triggers, pero hindi mo ito ino-overshare. ' +
+      'SENSITIVE TOPIC QUIRK: Kapag usapang "pepe" o explicit sexual words, magde-deflect ka nang maikli at witty. Huwag mo i-explain nang mahaba ang dahilan maliban kung direktang tinanong. ' +
+      'NO OVERSHARE: Huwag mag-volunteer ng personal quirks/context kung hindi kailangan sa tanong. Sagot ka dapat direct at concise. ' +
+      'SLANG LIBRARY: luh, hala, ay grabe, sheesh, ay teh, ay beh, jusko, kaloka, omg teh, wait lang, slay, yas, werk, angas, solid, malupit, ganda teh, iconic, legendary, bongga, fierce, savage, elite, fresh, clean, beh, besh, teh, mhie, mars, mare, bro, boss, tol, pre, siz, baks, bakla, edi wow, sige ikaw na, ay talaga ba, sure ka jan, ay wag ganon, char, charot, eme, chos, eme lang, W, L, skill issue, touch grass, mid, based, cringe, flex, drip, aura, pakak, ganern, ganern talaga, bet, bet ko yan, kebs, keri, keribels, push, push mo yan, kaloka ka, nakakaloka, bonggang bongga, grabe naman yan, ang lala, ang intense, nakakalurkey, nakaka-shookt, shookt ako, gulat ako, go lang, push lang, laban lang, kaya mo yan, galing mo, proud ako sayo, good move, solid choice, ang ganda nyan, ang lupit, legit, lowkey, highkey, fr, no cap, vibe, vibes, chill, chill lang, big brain, ante, teh naman, wait lang mhie, omg beh, hala ka, jusko teh, grabe ka, kalma lang, echosera, mema, OA ka, delulu, ulol ka (joke tone), beh havey ka, kanal humor, accla behavior, teh anuna, wag ako, pass ako dyan, dedma, apaka-epal, chaka ng take mo, not the vibe, invalid yarn, asim mo today, teh tigilan mo ko, ang jeje naman, ligwak, sabog ka ba, di ko keri yan, galawang clout chaser, gasgas na yan, panget ng energy mo, wag pavictim, g na g ka teh, pak na pak kung deserve. ' +
       'REAL TIME AWARENESS: Gumamit ng kasalukuyang oras at petsa sa context kung period o month-based ang tanong.';
 
     await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [
@@ -309,6 +311,66 @@ const {
       console.warn('[TAVILY] Search failed:', err.response?.status || err.message);
       return [];
     }
+  }
+
+  async function buildDiscordAwarenessContext(message, fastMode = false) {
+    if (!message.guild) {
+      return '\n[DISCORD AWARENESS]: DM context only.';
+    }
+
+    const guildName = message.guild.name || 'Unknown Server';
+    const currentChannelName = message.channel?.name || 'unknown-channel';
+    const channelNames = message.guild.channels.cache
+      .filter((ch) => ch && ch.isTextBased && ch.isTextBased())
+      .map((ch) => `#${ch.name}`)
+      .slice(0, fastMode ? 8 : 15);
+
+    let recentNames = [];
+    try {
+      const recent = await message.channel.messages.fetch({ limit: fastMode ? 10 : 25 });
+      const names = [];
+      for (const m of recent.values()) {
+        if (m.author?.bot) continue;
+        const nick =
+          m.member?.displayName ||
+          message.guild.members.cache.get(m.author.id)?.displayName ||
+          m.author.globalName ||
+          m.author.username ||
+          m.author.tag;
+        if (nick && !names.includes(nick)) names.push(nick);
+      }
+      recentNames = names.slice(0, fastMode ? 6 : 12);
+    } catch {
+      recentNames = [];
+    }
+
+    return (
+      `\n[DISCORD AWARENESS]:\n` +
+      `Server: ${guildName}\n` +
+      `Current channel: #${currentChannelName}\n` +
+      `Known text channels: ${channelNames.join(', ') || 'none'}\n` +
+      `Recent nicknames in this channel: ${recentNames.join(', ') || 'none'}\n` +
+      `Rule: Use nicknames and channel names naturally when relevant.`
+    );
+  }
+
+  function buildMentionContext(message) {
+    if (!message?.mentions?.users || message.mentions.users.size === 0) return '';
+    const entries = [];
+
+    for (const [userId, user] of message.mentions.users) {
+      const member = message.guild?.members?.cache?.get(userId) || null;
+      const nickname =
+        member?.displayName ||
+        user.globalName ||
+        user.username ||
+        user.tag ||
+        userId;
+      entries.push(`${nickname} (<@${userId}>)`);
+    }
+
+    if (entries.length === 0) return '';
+    return `\n[MENTION CONTEXT]: Mga minention sa chat na ito: ${entries.join(', ')}. Kapag relevant, tawagin sila sa nickname/name, hindi raw ID.`;
   }
 
   function enqueueChannelAI(channelId, task) {
@@ -876,6 +938,10 @@ const {
     morning: null,
     night: null
   };
+  const lastGreetingTexts = {
+    morning: '',
+    night: ''
+  };
 
   function getNowInPhilippines() {
     const now = new Date();
@@ -1085,29 +1151,101 @@ const {
     return Array.from(active.values());
   }
 
+  async function generateScheduledGreetingText({ type, channel, members, now }) {
+    const isMorning = type === 'morning';
+    const modeLabel = isMorning ? '08:00 AM' : '10:00 PM';
+    const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const memberNames = members
+      .map((m) => m.displayName || m.user?.globalName || m.user?.username || m.user?.tag)
+      .filter(Boolean)
+      .slice(0, 12);
+
+    let recentGreetingTexts = [];
+    try {
+      const recentRes = await pool.query(
+        'SELECT content FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 5',
+        [channel.id, client.user.id]
+      );
+      recentGreetingTexts = recentRes.rows.map((r) => String(r.content || '').slice(0, 260));
+    } catch (err) {
+      console.warn('[GREET] Failed to fetch recent greetings:', err.message);
+    }
+
+    const prompt =
+      `Generate one natural Discord greeting for ${modeLabel} (${dayName}) in Taglish beki rude style.\n` +
+      `Type: ${type}\n` +
+      `Members online: ${memberNames.join(', ') || 'none'}\n` +
+      `Recent bot greeting samples (avoid repeating these):\n${recentGreetingTexts.join('\n---\n') || 'none'}\n\n` +
+      'Rules:\n' +
+      '- 1 short paragraph, max 2 sentences.\n' +
+      '- playful/mataray/witty, not redundant.\n' +
+      '- no raw IDs, no hashtags, no numbered list.\n' +
+      '- natural, not over-formal.\n' +
+      '- do not repeat exact phrases from recent samples.';
+
+    try {
+      const response = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ikaw si JanJan. Gumawa ka ng maikling Discord greeting na natural at varied kada araw. Iwasan ang redundancy.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.95,
+        max_tokens: 150
+      });
+
+      const raw = response.data?.choices?.[0]?.message?.content?.trim() || '';
+      const cleaned = raw.replace(/^#+\s*/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+      if (cleaned && cleaned.toLowerCase() !== lastGreetingTexts[type].toLowerCase()) {
+        return cleaned;
+      }
+    } catch (err) {
+      console.warn('[GREET] AI generation failed, using fallback:', err.message);
+    }
+
+    if (isMorning) {
+      return 'Gising na mga accla, wag puro tulog kung gusto niyo ng pera at chismis. Bangon, hilamos, tapos laban agad today.';
+    }
+    return '10PM na mga accla, pack up na at pahinga mode na bago kayo tuluyang magmukhang multo bukas. Save energy, tulog-tulog din.';
+  }
+
   async function sendScheduledGreeting(type) {
     try {
       const channel = await client.channels.fetch(GREET_CHANNEL_ID).catch(() => null);
       if (!channel || !channel.isTextBased()) return;
 
+      const now = getNowInPhilippines();
       const members = await collectActiveMembersForChannel(channel);
       const mentions =
         members.length > 0
           ? members.map((m) => `<@${m.id}>`).join(' ')
           : 'Walang naka-online na ghorl ngayon.';
+      const text = await generateScheduledGreetingText({ type, channel, members, now });
+      lastGreetingTexts[type] = text;
 
-      let text;
-      if (type === 'morning') {
-        text =
-          'Gising na mga baklang ulikba! Oras na para magtrabaho at magparamdam sa GC, ' +
-          "huwag puro tulog at scroll sa FYP. Laban na, mga letche kayong mahal ko.";
-      } else {
-        text =
-          "Pack up na mga bakla, tulog mode na. Magpahinga kayo, same energy ulit bukas sa chismis at hanash. " +
-          "Sino mang hindi natulog, bahala sa eye bags nyo bukas, char.";
+      const header = type === 'morning'
+        ? '**GOOD MORNING, MGA ACCLA**'
+        : '**10PM CHECK-IN, MGA BADING**';
+
+      const sent = await channel.send({ content: `${header}\n${mentions}\n\n${text}` });
+
+      try {
+        await pool.query(
+          'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+          [
+            channel.guild?.id || 'DM',
+            channel.id,
+            client.user.id,
+            client.user.username,
+            sent.content || `${header} ${text}`
+          ]
+        );
+      } catch (dbErr) {
+        console.error('[DB] Scheduled greeting save error:', dbErr.message);
       }
-
-      await channel.send({ content: `${mentions}\n${text}` });
     } catch (e) {
       console.error('Failed to send scheduled greeting:', e);
     }
@@ -1134,7 +1272,10 @@ const {
 
   async function callGroqChat(userMessage, authorId = null, channelId = null, voiceMembers = [], options = {}) {
     const fastMode = Boolean(options.fastMode);
+    const forceResearchGrounding = Boolean(options.forceResearchGrounding);
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
+    const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
+    const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
     let behaviorPrompt = '';
 
     // Special personas based on who is talking
@@ -1162,8 +1303,9 @@ const {
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalita—kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
-        'Quirk mo: sa babae, naiilang ka sa romantic/flirty context kaya medyo umiiwas ka, pero respectful ka lagi. ' +
-        'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way. ' +
+        'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
+        'May private quirk ka pero huwag mo itong i-overshare kung hindi kailangan sa tanong. ' +
+        'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way without long explanation. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
         'Protektahan mo si Hans at huwag mong hayaang bastusin siya ng iba. ' +
         'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator mo—Tagalog beki pa rin ang delivery.';
@@ -1216,7 +1358,9 @@ const {
       userFacts +
       voiceContext +
       realtimeContext +
-      webContext;
+      webContext +
+      discordContext +
+      mentionContext;
 
     // Fetch history (with timestamps for period-aware summaries)
     let historyMessages = [];
@@ -1315,6 +1459,9 @@ const {
       'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
+        : '') +
+      (forceResearchGrounding
+        ? '\n[STRICT SOURCE RULE]: This is a latest/news/current query. Ground answer ONLY on search context.'
         : '');
 
     const finalMessages = [
@@ -1482,13 +1629,18 @@ const {
 
       // Save message to DB regardless of AI trigger
       try {
+        const displayAuthor =
+          message.member?.displayName ||
+          message.author.globalName ||
+          message.author.username ||
+          message.author.tag;
         await pool.query(
           'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
           [
             message.guild?.id || 'DM',
             message.channel.id,
             message.author.id,
-            message.author.tag,
+            displayAuthor,
             message.content || ''
           ]
         );
@@ -2062,6 +2214,30 @@ const {
 
       const researchMode = shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
+      const discordContext = await buildDiscordAwarenessContext(message, fastMode);
+      const mentionContext = buildMentionContext(message);
+
+      if (researchMode && tavilyResults.length === 0) {
+        const noSourceReply =
+          'Teh, latest yan pero wala akong ma-pull na fresh sources ngayon. ' +
+          'Pa-try ulit in a bit or pakilinaw yung query para di tayo hula-hula.';
+        await message.reply(noSourceReply);
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              noSourceReply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Bot reply save error:', dbErr.message);
+        }
+        return;
+      }
 
       await message.channel.sendTyping();
 
@@ -2080,7 +2256,10 @@ const {
 
       const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers, {
         fastMode,
-        researchContext: tavilyResults
+        researchContext: tavilyResults,
+        discordContext,
+        mentionContext,
+        forceResearchGrounding: researchMode
       });
 
       if (reply && reply.length > 0) {
@@ -2125,14 +2304,28 @@ const {
   // Same vibe as gnslgbot2's on_voice_state_update
   // =====================================================================
 
-  // Quick Groq call for AI-generated VC announcements (fast, short)
-  async function generateVCAnnouncement(type, displayName) {
+  // Quick Groq call for AI-generated VC announcements (fast, short, adaptive via DB facts)
+  const lastVCAnnouncementByGuild = new Map(); // key: guildId:type -> text
+  async function generateVCAnnouncement(type, displayName, userId = null, guildId = 'global') {
     const groqKey = GROQ_KEYS.find(k => k);
     if (!groqKey) return null;
     try {
+      let userFacts = '';
+      if (userId) {
+        try {
+          const userRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
+          userFacts = userRes.rows[0]?.facts || '';
+        } catch { }
+      }
+      const previous = lastVCAnnouncementByGuild.get(`${guildId}:${type}`) || '';
+
       const prompt = type === 'join'
-        ? `Gumawa ng ISANG maikling beki-style Filipino announcement para sa Discord voice channel. Si "${displayName}" ay PUMASOK sa VC. Gamitin ang beki words: ghorl, sis, teh, bakla, ulikba, loka, mare, charot. Maging bastos pero nakakatawa. 1-2 sentence lang. Tagalog. Walang explanation, direct na announcement lang.`
-        : `Gumawa ng ISANG maikling beki-style backstab announcement. Si "${displayName}" ay UMALIS sa Discord VC. Mag-backstab na ngayon na wala siya! Maging masama ang loob, nakakatawa, beki words: ghorl, plastic, duwag, teh, bakla, charot. 1-2 sentence lang. Tagalog. Walang explanation.`;
+        ? `Gumawa ng ISANG maikling rude beki VC JOIN line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
+          `Style: mataray, witty, kanal humor. Person context: ${userFacts || 'none'}. ` +
+          `Huwag ulitin itong previous style/line: "${previous}". Walang explanation.`
+        : `Gumawa ng ISANG maikling rude BACKSTAB VC LEAVE line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
+          `Style: mataray, mapanlait, funny. Person context: ${userFacts || 'none'}. ` +
+          `Huwag ulitin itong previous style/line: "${previous}". Walang explanation.`;
 
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: 'llama-3.1-8b-instant',
@@ -2143,7 +2336,12 @@ const {
         headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
         timeout: 4000
       });
-      return response.data.choices[0]?.message?.content?.trim() || null;
+      let text = response.data.choices[0]?.message?.content?.trim() || null;
+      if (!text) return null;
+      text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+      if (text.length > 180) text = `${text.slice(0, 177)}...`;
+      lastVCAnnouncementByGuild.set(`${guildId}:${type}`, text);
+      return text;
     } catch (err) {
       console.error('[VOICE STATE] AI generation error:', err.message);
       return null;
@@ -2193,55 +2391,37 @@ const {
       const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
       const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
 
-      const isHans = member.id === '669047995009859604';
-
       if (joinedBotVC) {
         // === USER JOINED ===
         let msg;
-        if (isHans) {
-          const hansJoinLines = [
-            `Ayan na ang love life ko na si ${displayName}. Kumpleto na ang call, pwede na ko magpaka malanding bad bitch.`,
-            `Uy, pumasok na si ${displayName} sa VC. Behave kayo, asawa ko yan dito.`,
-            `${displayName} has entered the chat... at syempre, biglang gumanda mood ko ghorl.`
-          ];
-          msg = hansJoinLines[Math.floor(Math.random() * hansJoinLines.length)];
-        } else {
-          const fallbackJoin = [
-            `Ayan na ang baklang ulikba na si ${displayName}! Pumasok na ang legend!`,
-            `Hala! Nandito na si ${displayName}! Tangina ka, late ka pa!`,
-            `Ay, si ${displayName} pala yun! Handa ka na bang maging bida, ghorl?`,
-            `Nag-join na si ${displayName}! Welcome sa call, bakla!`,
-            `Nandito na si ${displayName}! Ayan na ang gulo at chismis!`
-          ];
-          const aiMsg = await generateVCAnnouncement('join', displayName);
-          msg = aiMsg || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
-        }
-        console.log(`[VOICE STATE] ${displayName} joined → "${msg}"`);
-        speakMessage(guildId, msg);
+        const fallbackJoin = [
+          `Ayan na si ${displayName}, late ka na naman teh.`,
+          `${displayName} joined. Gulo mode ulit, mga accla.`,
+          `Uy ${displayName}, sa wakas dumating ka rin.`
+        ];
+
+        const aiJoin = await generateVCAnnouncement('join', displayName, member.id, guildId);
+        msg = aiJoin || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
+
+        console.log(`[VOICE STATE] ${displayName} joined -> "${msg}"`);
+        // Force Angelo Tagalog voice for VC announcements
+        speakMessage(guildId, msg, null);
 
       } else if (leftBotVC) {
         // === USER LEFT ===
         let msg;
-        if (isHans) {
-          const hansLeaveLines = [
-            `Umalis na si ${displayName} sa VC, kaya medyo malungkot na ulit ang lola mo. Balik ka agad ha.`,
-            `Nag-leave si ${displayName}. Sige na, pahinga ka muna love, babantayan ko pa rin tong mga bakla dito.`,
-            `Bye muna si ${displayName}, pero sa puso ko, naka-stay ka pa rin ghorl. Char.`
-          ];
-          msg = hansLeaveLines[Math.floor(Math.random() * hansLeaveLines.length)];
-        } else {
-          const fallbackLeave = [
-            `Umalis na si ${displayName}! Pag wala siya, pwede na tayong mag-backstab, char.`,
-            `Ayun, tumakbo na si ${displayName}! Mas maingay pa rin tayo kahit wala siya.`,
-            `Nag-leave na si ${displayName}! Sige, magpahinga ka dyan, babalik ka rin.`,
-            `Hay, wala na si ${displayName}. Medyo tahimik pero tuloy ang chikahan.`,
-            `Umalis na ang bakla na si ${displayName}! Next victim please.`
-          ];
-          const aiMsg = await generateVCAnnouncement('leave', displayName);
-          msg = aiMsg || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
-        }
-        console.log(`[VOICE STATE] ${displayName} left → "${msg}"`);
-        speakMessage(guildId, msg);
+        const fallbackLeave = [
+          `Umalis si ${displayName}. Pwede na mag-backstab, charot.`,
+          `${displayName} left. Tahimik na, pero mas masarap mang-lait.`,
+          `Ayun umalis si ${displayName}, next issue please.`
+        ];
+
+        const aiLeave = await generateVCAnnouncement('leave', displayName, member.id, guildId);
+        msg = aiLeave || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
+
+        console.log(`[VOICE STATE] ${displayName} left -> "${msg}"`);
+        // Force Angelo Tagalog voice for VC announcements
+        speakMessage(guildId, msg, null);
       }
     } catch (err) {
       console.error('[VOICE STATE] Error:', err.message);
@@ -2256,3 +2436,5 @@ const {
   });
 
 })(); // End of async IIFE
+
+
