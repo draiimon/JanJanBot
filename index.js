@@ -496,8 +496,12 @@ const {
     const hasMoveVerb =
       lower.includes('lumipat ka') ||
       lower.includes('lipat ka') ||
+      lower.includes('balik ka') ||
+      lower.includes('balik kana') ||
+      lower.includes('balik ka na') ||
       lower.includes('bumaba ka') ||
       lower.includes('umakyat ka') ||
+      lower.includes('paakyat ka') ||
       lower.includes('ibaba mo') ||
       lower.includes('iakyat mo') ||
       lower.includes('sumunod ka') ||
@@ -509,6 +513,11 @@ const {
       lower.includes('vc') ||
       lower.includes('voice') ||
       lower.includes('call') ||
+      lower.includes('sa vc ko') ||
+      lower.includes('sa channel ko') ||
+      lower.includes('kung nasan ako') ||
+      lower.includes('sakin') ||
+      lower.includes('sa akin') ||
       lower.includes('dito') ||
       lower.includes('sa baba') ||
       lower.includes('sa taas') ||
@@ -577,16 +586,40 @@ const {
     const lower = (text || '').toLowerCase();
     if (!lower) return false;
     return (
+      lower.includes('isama') ||
+      lower.includes('dalhin') ||
+      lower.includes('bring') ||
+      lower.includes('balik') ||
       lower.includes('lipat') ||
       lower.includes('lumipat') ||
       lower.includes('iakyat') ||
       lower.includes('ibaba') ||
+      lower.includes('paakyat') ||
       lower.includes('move') ||
       lower.includes('punta') ||
       lower.includes('baba') ||
       lower.includes('taas') ||
+      lower.includes('sa vc ko') ||
+      lower.includes('sa channel ko') ||
+      lower.includes('kung nasan ako') ||
+      lower.includes('sakin') ||
+      lower.includes('sa akin') ||
       lower.includes('dito') ||
       lower.includes('sunod')
+    );
+  }
+
+  function shouldTargetAuthorVoice(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return (
+      lower.includes('sa vc ko') ||
+      lower.includes('sa channel ko') ||
+      lower.includes('kung nasan ako') ||
+      lower.includes('sakin') ||
+      lower.includes('sa akin') ||
+      lower.includes('dito sa channel ko') ||
+      lower.includes('dito sakin')
     );
   }
 
@@ -717,7 +750,9 @@ const {
     const aiIntent = await detectVoiceMoveIntentWithAI(rawText, candidates);
     const rawIdMatch = String(rawText || '').match(/\b(\d{17,20})\b/);
     const channelIdFromText = rawIdMatch ? rawIdMatch[1] : null;
-    let hasIntent = isNaturalVoiceMoveIntent(rawText) || aiIntent.move;
+    const requestedNames = extractRequestedMemberNames(rawText);
+    const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring || requestedNames.length > 0;
+    let hasIntent = isNaturalVoiceMoveIntent(rawText) || aiIntent.move || shouldBring;
     if (!hasIntent && hasVoiceMoveCueWords(rawText)) {
       hasIntent = true;
     }
@@ -777,6 +812,7 @@ const {
       lower.includes('dito') ||
       lower.includes('sumunod ka') ||
       lower.includes('sunod ka') ||
+      shouldTargetAuthorVoice(rawText) ||
       aiIntent.target === 'FOLLOW'
     )) {
       const authorVC = message.member?.voice?.channel || null;
@@ -797,11 +833,11 @@ const {
       target = findVoiceChannelByName(candidates, rawText);
     }
 
-    const requestedNames = extractRequestedMemberNames(rawText);
-    const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring || requestedNames.length > 0;
     if (!target && shouldBring) {
-      // "bring X here" defaults to bot's current VC
-      target = botVC;
+      // If user says "sakin/sa vc ko", use author's VC; otherwise default to bot's VC.
+      const authorVC = message.member?.voice?.channel || null;
+      if (shouldTargetAuthorVoice(rawText) && authorVC) target = authorVC;
+      else target = botVC;
     }
 
     if (!target) {
@@ -891,8 +927,6 @@ const {
       const finalMoveReplyRaw = aiMoveReply || `Ayan, lumipat na ako sa ${target.name}.${movedSuffix} Huwag ka nang maingay, teh.`;
       const finalMoveReply = lessenCharotWords(finalMoveReplyRaw, isHostileText(rawText));
       await message.reply(finalMoveReply);
-      await new Promise((r) => setTimeout(r, 900));
-      await speakMessage(message.guild.id, finalMoveReply, null);
     } catch (err) {
       console.error('[VOICE MOVE] natural move failed:', err.message);
       await message.reply('Hindi ako nakalipat, may sabit. Try mo ulit, teh.');
