@@ -1226,9 +1226,20 @@ const {
       return true;
     }
 
+    if (/\b(kamusta|kumusta|hello|hi|yo)\b/i.test(rawText)) {
+      const quick = [
+        'Eto buhay pa, teh. Ikaw kumusta?',
+        'Okay pa naman, beh. Anong chika?',
+        'Ayos lang ako. Ikaw, anong ganap?'
+      ];
+      const line = quick[Math.floor(Math.random() * quick.length)];
+      await message.reply(lessenCharotWords(line, false)).catch(() => { });
+      return true;
+    }
+
     let ambientLine = null;
     try {
-      const recent = await message.channel.messages.fetch({ limit: 10 }).catch(() => null);
+      const recent = await message.channel.messages.fetch({ limit: 8 }).catch(() => null);
       const speakerName =
         message.member?.displayName ||
         message.author?.globalName ||
@@ -1270,12 +1281,12 @@ const {
               `Current speaker: ${speakerName}`
           }
         ],
-        temperature: 0.55,
+        temperature: 0.35,
         max_tokens: 40
       });
       ambientLine = aiRes.data?.choices?.[0]?.message?.content?.trim() || null;
       if (ambientLine) {
-        ambientLine = ambientLine.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+        ambientLine = cleanupGeneratedLine(ambientLine, { allowExplicit: false });
         if (!isReplyLooseRelevant(ambientLine, convoContext)) ambientLine = null;
         if (ambientLine && hasDisallowedParticipantName(ambientLine, participants, speakerName)) ambientLine = null;
       }
@@ -1340,7 +1351,7 @@ const {
                 .filter(Boolean)
             )];
             const recentHuman = humanRecent
-              .slice(0, 6)
+              .slice(0, 4)
               .map((m) => `${m.member?.displayName || m.author?.globalName || m.author?.username || 'unknown'}: ${(m.content || '').replace(/\s+/g, ' ').slice(0, 140)}`)
               .join(' || ');
 
@@ -1355,6 +1366,7 @@ const {
                     content:
                       'You are JanJan, rude Taglish beki. Create one short chismis interjection based on recent conversation context. ' +
                       'Max 12 words. Epal/funny/mataray tone. No explanation. Stay on-topic. ' +
+                      'Use natural Tagalog/Taglish grammar. Avoid awkward phrasing. ' +
                       `If naming someone, ONLY name latest speaker: "${latestSpeaker}".`
                   },
                   {
@@ -1365,12 +1377,12 @@ const {
                       `Latest speaker: ${latestSpeaker}`
                   }
                 ],
-                temperature: 0.55,
+                temperature: 0.35,
                 max_tokens: 45
               });
               epal = aiRes.data?.choices?.[0]?.message?.content?.trim() || null;
               if (epal) {
-                epal = epal.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+                epal = cleanupGeneratedLine(epal, { allowExplicit: false });
                 if (!isReplyLooseRelevant(epal, recentHuman)) epal = null;
                 if (epal && hasDisallowedParticipantName(epal, participants, [latestSpeaker])) epal = null;
               }
@@ -1457,6 +1469,35 @@ const {
     if (keywords.length === 0) return true;
     const lower = String(reply || '').toLowerCase();
     return keywords.some((k) => lower.includes(k));
+  }
+
+  function cleanupGeneratedLine(text = '', options = {}) {
+    const allowExplicit = Boolean(options.allowExplicit);
+    let out = String(text || '').trim();
+    if (!out) return out;
+
+    out = out
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .replace(/([!?.,])\1{2,}/g, '$1$1')
+      .trim();
+
+    const parts = out.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+    const seen = new Set();
+    const kept = [];
+    for (const p of parts) {
+      const key = p.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      kept.push(p);
+    }
+    out = kept.join(' ').trim() || out;
+
+    if (!allowExplicit) {
+      out = out.replace(/\bsarap ka ba talaga\??/gi, '').replace(/\s{2,}/g, ' ').trim();
+    }
+
+    return out;
   }
 
   function escapeRegex(text = '') {
@@ -2459,6 +2500,9 @@ const {
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
+        'Natural Tagalog/Taglish grammar ang gamit mo; iwasan ang pilit o awkward na phrasing. ' +
+        'Huwag ulitin ang parehong linya o catchphrase kung hindi kailangan. ' +
+        'Context lock: sagot dapat sa latest user message, hindi sa lumang chika kung hindi relevant. ' +
         'Name rule: Sa server context, nickname/display name ang gamitin mo. Iwasan ang true username/tag kapag may nickname na available. ' +
         'Basahin at unawain muna ang buong message bago mag-reply; intent first lagi bago attitude. ' +
         'Bago magsagot, silently i-check muna: intent, target person, requested action, at available context. ' +
@@ -3521,7 +3565,8 @@ const {
           sanitizedReply = stripDisallowedParticipantNames(sanitizedReply, participants, allowedNames, 'teh');
         }
 
-        const guardedReply = applyRealityGuard(sanitizedReply, voiceMembers);
+        const cleanedReply = cleanupGeneratedLine(sanitizedReply, { allowExplicit: sexualGuardMode || flirtyMode });
+        const guardedReply = applyRealityGuard(cleanedReply, voiceMembers);
         const normalizedReply = lessenCharotWords(guardedReply, hostileMode);
         const sourceLines = tavilyResults
           .slice(0, 3)
