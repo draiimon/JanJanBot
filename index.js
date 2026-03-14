@@ -422,6 +422,25 @@ const {
       recentNames = [];
     }
 
+    let guildRecentOverview = 'none';
+    try {
+      const recentGuildRes = await pool.query(
+        'SELECT channel_id, author_tag, content, created_at FROM messages WHERE guild_id = $1 ORDER BY created_at DESC LIMIT $2',
+        [message.guild.id, fastMode ? 12 : 24]
+      );
+      const channelMap = message.guild.channels.cache;
+      const lines = recentGuildRes.rows.map((row) => {
+        const ch = channelMap.get(String(row.channel_id));
+        const chName = ch?.name ? `#${ch.name}` : `#${row.channel_id}`;
+        const author = String(row.author_tag || 'unknown');
+        const snippet = String(row.content || '').replace(/\s+/g, ' ').slice(0, 90);
+        return `${chName} | ${author}: ${snippet}`;
+      });
+      guildRecentOverview = lines.slice(0, fastMode ? 6 : 12).join(' || ') || 'none';
+    } catch {
+      guildRecentOverview = 'none';
+    }
+
     const botVoice = message.guild.members.me?.voice?.channel || null;
     const authorVoice = message.member?.voice?.channel || null;
     const voiceChannels = message.guild.channels.cache
@@ -446,6 +465,7 @@ const {
       `Known text channels: ${channelNames.join(', ') || 'none'}\n` +
       `Voice channels and members: ${voiceChannels.join(' | ') || 'none'}\n` +
       `Recent nicknames in this channel: ${recentNames.join(', ') || 'none'}\n` +
+      `Recent server-wide chat overview: ${guildRecentOverview}\n` +
       `Rule: Use nicknames and channel names naturally when relevant.`
     );
   }
@@ -1027,7 +1047,7 @@ const {
   async function maybeAmbientInteract(message, rawText) {
     if (!message.guild || !rawText) return false;
     const lower = rawText.toLowerCase();
-    const janjanTriggered = /\bjanjan\b|\bjanjanbot\b/.test(lower);
+    const janjanTriggered = /\b(janjan|janjanbot|jan|josh)\b/.test(lower);
     if (!janjanTriggered) return false;
 
     const now = Date.now();
