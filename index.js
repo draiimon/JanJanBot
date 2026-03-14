@@ -757,6 +757,20 @@ const {
     }
   }
 
+  function normalizeLookupText(text = '') {
+    return String(text || '')
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function compactLookupText(text = '') {
+    return normalizeLookupText(text).replace(/\s+/g, '');
+  }
+
   function extractRequestedMemberNames(text = '') {
     const lower = String(text || '').toLowerCase();
     if (!lower) return [];
@@ -779,6 +793,24 @@ const {
         .forEach((n) => names.add(n));
     }
 
+    // Supports: "bring keia", "isama mo si keia", "dalhin mo keia", "paakyat si keia"
+    const actionNamePatterns = [
+      /\b(?:bring|isama|dalhin|iakyat|ibaba|move|lipat|paakyat|pababa)\s+(?:mo\s+)?(?:si\s+)?([a-z0-9._-]{2,32})\b/gi,
+      /\b(?:kay|kina)\s+([a-z0-9._,\s-]{2,80})\b/gi
+    ];
+    for (const re of actionNamePatterns) {
+      let m;
+      while ((m = re.exec(lower)) !== null) {
+        const captured = String(m[1] || '').trim();
+        if (!captured) continue;
+        captured
+          .split(/,| at | and /i)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .forEach((n) => names.add(n));
+      }
+    }
+
     return [...names].filter((n) => n.length >= 2);
   }
 
@@ -788,13 +820,35 @@ const {
     const seen = new Set();
 
     for (const requested of requestedNames) {
-      const needle = requested.toLowerCase();
+      const needleNorm = normalizeLookupText(requested);
+      const needleCompact = compactLookupText(requested);
+      if (!needleNorm && !needleCompact) continue;
       const member = guild.members.cache.find((m) => {
-        const nick = (m.displayName || '').toLowerCase();
-        const uname = (m.user?.username || '').toLowerCase();
-        const gname = (m.user?.globalName || '').toLowerCase();
-        return nick === needle || uname === needle || gname === needle ||
-          nick.includes(needle) || uname.includes(needle) || gname.includes(needle);
+        const nickNorm = normalizeLookupText(m.displayName || '');
+        const unameNorm = normalizeLookupText(m.user?.username || '');
+        const gnameNorm = normalizeLookupText(m.user?.globalName || '');
+        const nickCompact = compactLookupText(m.displayName || '');
+        const unameCompact = compactLookupText(m.user?.username || '');
+        const gnameCompact = compactLookupText(m.user?.globalName || '');
+
+        return (
+          (needleNorm && (
+            nickNorm === needleNorm ||
+            unameNorm === needleNorm ||
+            gnameNorm === needleNorm ||
+            nickNorm.includes(needleNorm) ||
+            unameNorm.includes(needleNorm) ||
+            gnameNorm.includes(needleNorm)
+          )) ||
+          (needleCompact && (
+            nickCompact === needleCompact ||
+            unameCompact === needleCompact ||
+            gnameCompact === needleCompact ||
+            nickCompact.includes(needleCompact) ||
+            unameCompact.includes(needleCompact) ||
+            gnameCompact.includes(needleCompact)
+          ))
+        );
       });
       if (member && !seen.has(member.id)) {
         seen.add(member.id);
@@ -817,19 +871,23 @@ const {
   }
 
   function findVoiceChannelByName(candidates, text) {
-    const lower = (text || '').toLowerCase();
-    if (!lower) return null;
-    const normalized = lower.replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim();
-    if (!normalized) return null;
+    const normalized = normalizeLookupText(text);
+    const compact = compactLookupText(text);
+    if (!normalized && !compact) return null;
 
     let best = null;
     let bestLen = 0;
     for (const ch of candidates) {
-      const name = (ch.name || '').toLowerCase();
-      if (!name) continue;
-      if (normalized.includes(name) && name.length > bestLen) {
+      const nameNorm = normalizeLookupText(ch.name || '');
+      const nameCompact = compactLookupText(ch.name || '');
+      if (!nameNorm && !nameCompact) continue;
+      const matches =
+        (nameNorm && normalized.includes(nameNorm)) ||
+        (nameCompact && compact.includes(nameCompact));
+      const scoreLen = Math.max(nameNorm.length, nameCompact.length);
+      if (matches && scoreLen > bestLen) {
         best = ch;
-        bestLen = name.length;
+        bestLen = scoreLen;
       }
     }
     return best;
@@ -878,7 +936,14 @@ const {
 
     if (!target) {
       for (const [alias, channelId] of voiceChannelAliasMap.entries()) {
-        if (!lower.includes(alias)) continue;
+        const normalizedText = normalizeLookupText(rawText);
+        const compactText = compactLookupText(rawText);
+        const aliasNorm = normalizeLookupText(alias);
+        const aliasCompact = compactLookupText(alias);
+        const aliasMatched =
+          (aliasNorm && normalizedText.includes(aliasNorm)) ||
+          (aliasCompact && compactText.includes(aliasCompact));
+        if (!aliasMatched) continue;
         const aliasChannel = message.guild.channels.cache.get(channelId) || null;
         if (aliasChannel && typeof aliasChannel.isVoiceBased === 'function' && aliasChannel.isVoiceBased()) {
           target = aliasChannel;
@@ -938,10 +1003,25 @@ const {
     }
 
     if (!target && aiIntent.target === 'NAME' && aiIntent.channelName) {
-      target = candidates.find((ch) => (ch.name || '').toLowerCase() === aiIntent.channelName.toLowerCase()) || null;
+      const aiNameNorm = normalizeLookupText(aiIntent.channelName);
+      const aiNameCompact = compactLookupText(aiIntent.channelName);
+      target = candidates.find((ch) => {
+        const chNorm = normalizeLookupText(ch.name || '');
+        const chCompact = compactLookupText(ch.name || '');
+        return (
+          (aiNameNorm && chNorm === aiNameNorm) ||
+          (aiNameCompact && chCompact === aiNameCompact)
+        );
+      }) || null;
       if (!target) {
-        const normalized = aiIntent.channelName.toLowerCase();
-        target = candidates.find((ch) => (ch.name || '').toLowerCase().includes(normalized)) || null;
+        target = candidates.find((ch) => {
+          const chNorm = normalizeLookupText(ch.name || '');
+          const chCompact = compactLookupText(ch.name || '');
+          return (
+            (aiNameNorm && chNorm.includes(aiNameNorm)) ||
+            (aiNameCompact && chCompact.includes(aiNameCompact))
+          );
+        }) || null;
       }
     }
 
