@@ -399,6 +399,112 @@ const {
     return next;
   }
 
+  function isNaturalVoiceMoveIntent(text) {
+    const lower = (text || '').toLowerCase();
+    if (!lower) return false;
+    const hasMoveVerb =
+      lower.includes('lumipat ka') ||
+      lower.includes('lipat ka') ||
+      lower.includes('move ka') ||
+      lower.includes('punta ka');
+    const hasVoiceTargetHint =
+      lower.includes('channel') ||
+      lower.includes('vc') ||
+      lower.includes('voice') ||
+      lower.includes('call') ||
+      lower.includes('sa baba') ||
+      lower.includes('sa taas') ||
+      /<#\d{17,20}>/.test(lower);
+    return hasMoveVerb && hasVoiceTargetHint;
+  }
+
+  function listMoveCandidateVoiceChannels(guild) {
+    if (!guild) return [];
+    return [...guild.channels.cache.values()]
+      .filter((ch) => typeof ch.isVoiceBased === 'function' && ch.isVoiceBased())
+      .sort((a, b) => {
+        const pa = typeof a.rawPosition === 'number' ? a.rawPosition : 0;
+        const pb = typeof b.rawPosition === 'number' ? b.rawPosition : 0;
+        if (pa !== pb) return pa - pb;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+  }
+
+  function findVoiceChannelByName(candidates, text) {
+    const lower = (text || '').toLowerCase();
+    if (!lower) return null;
+    const normalized = lower.replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim();
+    if (!normalized) return null;
+
+    let best = null;
+    let bestLen = 0;
+    for (const ch of candidates) {
+      const name = (ch.name || '').toLowerCase();
+      if (!name) continue;
+      if (normalized.includes(name) && name.length > bestLen) {
+        best = ch;
+        bestLen = name.length;
+      }
+    }
+    return best;
+  }
+
+  async function tryNaturalVoiceMoveFromChat(message, rawText) {
+    if (!message.guild || !isNaturalVoiceMoveIntent(rawText)) return false;
+
+    const connection = getVoiceConnection(message.guild.id);
+    const botVC = message.guild.members.me?.voice?.channel || null;
+    if (!connection || !botVC) return false;
+
+    const lower = (rawText || '').toLowerCase();
+    const candidates = listMoveCandidateVoiceChannels(message.guild);
+    if (candidates.length === 0) return false;
+
+    let target = null;
+    const mentionedVoiceChannel = message.mentions.channels.find(
+      (ch) => typeof ch.isVoiceBased === 'function' && ch.isVoiceBased()
+    );
+    if (mentionedVoiceChannel) {
+      target = mentionedVoiceChannel;
+    }
+
+    if (!target && (lower.includes('sa baba') || lower.includes('ibaba'))) {
+      const pool = candidates.filter((ch) => ch.parentId === botVC.parentId);
+      const source = pool.length > 0 ? pool : candidates;
+      const idx = source.findIndex((ch) => ch.id === botVC.id);
+      if (idx >= 0 && idx < source.length - 1) target = source[idx + 1];
+    }
+
+    if (!target && (lower.includes('sa taas') || lower.includes('itaas'))) {
+      const pool = candidates.filter((ch) => ch.parentId === botVC.parentId);
+      const source = pool.length > 0 ? pool : candidates;
+      const idx = source.findIndex((ch) => ch.id === botVC.id);
+      if (idx > 0) target = source[idx - 1];
+    }
+
+    if (!target) {
+      target = findVoiceChannelByName(candidates, rawText);
+    }
+
+    if (!target || target.id === botVC.id) {
+      await message.reply('Teh, wala akong matinong target na malilipatan dyan. Sabihin mo kung saan talaga.');
+      return true;
+    }
+
+    try {
+      try { connection.destroy(); } catch { }
+      setSavedVoiceState({ channelId: target.id, guildId: message.guild.id });
+      await saveVoiceStateToDB(message.guild.id, target.id);
+      voiceReconnectAttempts = 0;
+      joinAndWatch(target.id, message.guild.id, message.guild.voiceAdapterCreator);
+      await message.reply(`Sige na, lilipat na ako sa **${target.name}**. Nainis ka na eh, kalma ka lang.`);
+    } catch (err) {
+      console.error('[VOICE MOVE] natural move failed:', err.message);
+      await message.reply('Hindi ako nakalipat, may sabit. Try mo ulit, teh.');
+    }
+    return true;
+  }
+
   function getOrCreatePlayer(guildId) {
     if (audioPlayers.has(guildId)) return audioPlayers.get(guildId);
     const player = createAudioPlayer({
@@ -2216,6 +2322,11 @@ const {
           return;
         }
 
+      }
+
+      if (!rawContent.startsWith(prefix)) {
+        const movedByNaturalChat = await tryNaturalVoiceMoveFromChat(message, rawContent);
+        if (movedByNaturalChat) return;
       }
 
       // Mention or reply-to-bot triggers AI chat
