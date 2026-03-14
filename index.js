@@ -212,6 +212,7 @@ const {
       'ATTITUDE: Prangka, rude ang main persona, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
       'RUDE MODE: Default mo ay mataray at may asim. Hindi ka soft unless needed. Roasty ka pero witty at concise. ' +
       'CHAROT CONTROL: Gamitin ang "charot/eme/chos" only kapag playful ang usapan. Kapag galit, minura ka, o bastos/malibog ang tono ng kausap, huwag mag-charot; sumagot ka nang direct, matalim, at to the point. ' +
+      'CHAROT LIMIT: Maximum isang charot-style filler lang per message, at optional lang ito. ' +
       'NO BACKDOWN: Kapag inaatake ka o binabastos ka, huwag pa-cute at huwag magpatalo. Clapback na concise, maldita, at confident. ' +
       'ENERGY MIRROR (SAFE): Puwede mong i-match ang intensity ng tono ng kausap, pero huwag mag-escalate ng explicit sexual content. Maging bastos/maldita sa tono kung bastos ang kausap, pero walang explicit sexual details. ' +
       'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
@@ -505,6 +506,31 @@ const {
     );
   }
 
+  function isHostileText(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return /(gago|tanga|putang|bwisit|ulol|tarantado|bobo|punyeta|pakyu|fuck you|fucku)/i.test(lower);
+  }
+
+  function lessenCharotWords(text = '', strict = false) {
+    let output = String(text || '');
+    if (!output) return output;
+
+    const tokenPattern = /\b(charot|eme|chos|char)\b/gi;
+    if (strict) {
+      output = output.replace(tokenPattern, '');
+      return output.replace(/\s{2,}/g, ' ').trim();
+    }
+
+    let keptOne = false;
+    output = output.replace(tokenPattern, (match) => {
+      if (keptOne) return '';
+      keptOne = true;
+      return match;
+    });
+    return output.replace(/\s{2,}/g, ' ').trim();
+  }
+
   function hasVoiceMoveCueWords(text) {
     const lower = (text || '').toLowerCase();
     if (!lower) return false;
@@ -689,7 +715,8 @@ const {
       const movedSuffix = movedNames.length > 0
         ? ` Dinala ko rin sina ${movedNames.join(', ')}.`
         : '';
-      const finalMoveReply = aiMoveReply || `Ayan, lumipat na ako sa ${target.name}.${movedSuffix} Huwag ka nang maingay, teh.`;
+      const finalMoveReplyRaw = aiMoveReply || `Ayan, lumipat na ako sa ${target.name}.${movedSuffix} Huwag ka nang maingay, teh.`;
+      const finalMoveReply = lessenCharotWords(finalMoveReplyRaw, isHostileText(rawText));
       await message.reply(finalMoveReply);
       await new Promise((r) => setTimeout(r, 900));
       await speakMessage(message.guild.id, finalMoveReply, null);
@@ -755,7 +782,8 @@ const {
       'Nandito lang ako, teh. Tuloy niyo lang chika niyo.',
       'Ako na naman? Sige, carry on mga accla.'
     ];
-    const finalLine = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+    const finalLineRaw = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+    const finalLine = lessenCharotWords(finalLineRaw, false);
     await message.reply(finalLine).catch(() => { });
     return true;
   }
@@ -2645,6 +2673,7 @@ const {
       }
 
       const sexualGuardMode = isSexualEscalationText(content);
+      const hostileMode = isHostileText(content);
 
       const researchMode = shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
@@ -2698,12 +2727,13 @@ const {
       });
 
       if (reply && reply.length > 0) {
+        const normalizedReply = lessenCharotWords(reply, hostileMode);
         const sourceLines = tavilyResults
           .slice(0, 3)
           .map((r) => `- [${r.title}](${r.url})`);
         const finalReply = sourceLines.length > 0
-          ? `${reply}\n\nSources:\n${sourceLines.join('\n')}`
-          : reply;
+          ? `${normalizedReply}\n\nSources:\n${sourceLines.join('\n')}`
+          : normalizedReply;
         const safeReply = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
 
         await message.reply(safeReply);
