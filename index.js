@@ -60,6 +60,10 @@ const {
   const aiChannelQueues = new Map();
   const aiChannelQueueDepths = new Map();
   const ambientChatState = new Map(); // channelId -> last ambient timestamp
+  const voiceChannelAliasMap = new Map([
+    ['monkeybars', '1427128206431096913'],
+    ['monekybars', '1427128206431096913']
+  ]);
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -837,6 +841,17 @@ const {
     );
     if (mentionedVoiceChannel) {
       target = mentionedVoiceChannel;
+    }
+
+    if (!target) {
+      for (const [alias, channelId] of voiceChannelAliasMap.entries()) {
+        if (!lower.includes(alias)) continue;
+        const aliasChannel = message.guild.channels.cache.get(channelId) || null;
+        if (aliasChannel && typeof aliasChannel.isVoiceBased === 'function' && aliasChannel.isVoiceBased()) {
+          target = aliasChannel;
+          break;
+        }
+      }
     }
 
     if (!target && channelIdFromText) {
@@ -2060,7 +2075,8 @@ const {
         'Kapag may ambiguity, mag-ask ng 1 concise clarifying question; wag mag-imbento. ' +
         'FACTUAL GROUNDING: Huwag mag-claim ng specific person/channel/voice presence unless nasa provided Discord context o recent messages. ' +
         'Kapag kulang ang proof, sabihin na hindi sure kaysa manghula. ' +
-        'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
+        'Default baseline mo ay mataray/rude pa rin kahit neutral ang user; iwasan ang sobrang bland o sobrang bait na tono. ' +
+        'Maging "mataray with class": maanghang, witty, concise, at may asim. ' +
         'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
         'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
