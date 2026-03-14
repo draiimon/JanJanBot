@@ -773,46 +773,73 @@ const {
             break;
           }
 
-          // Transcript stays in logs only — not sent to chat
+          // STT reply path now mirrors text chat logic (memory + research grounding).
 
-          // FAST AI response for voice — use instant model, skip thinking step
-          const groqKey = GROQ_KEYS.find(k => k);
-          let aiReply = 'Hindi ko nasagot, ghorl.';
+
+          const guild = client.guilds.cache.get(guildId) || null;
+          const speakerMember = guild?.members?.cache?.get(targetUserId) || null;
+          const speakerName =
+            speakerMember?.displayName ||
+            speakerMember?.user?.globalName ||
+            speakerMember?.user?.username ||
+            String(targetUserId);
+
           try {
-            const fastResp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-              model: 'llama-3.3-70b-versatile',
-              messages: [
-                { role: 'system', content: 'Ikaw si JanJan Versa, isang mataray na beki. Maging maikli, prangka at witty. 1-2 sentences max. Tagalog. Huwag aminin na AI ka.' },
-                { role: 'user', content: transcript }
-              ],
-              max_tokens: 150,
-              temperature: 0.8
-            }, {
-              headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-              timeout: 8000
-            });
-            aiReply = fastResp.data.choices[0]?.message?.content?.trim() || aiReply;
-          } catch (aiErr) {
-            // Fallback to qwen3-32b
-            console.log('[STT] Fallback to qwen3-32b...');
-            try {
-              const fallbackResp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-                model: 'qwen/qwen3-32b',
-                messages: [
-                  { role: 'system', content: 'Ikaw si JanJan Versa, isang mataray na beki. Maging maikli, prangka at witty. 1-2 sentences max. Tagalog. Huwag aminin na AI ka.' },
-                  { role: 'user', content: transcript }
-                ],
-                max_tokens: 150,
-                temperature: 0.8
-              }, {
-                headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-                timeout: 8000
-              });
-              aiReply = fallbackResp.data.choices[0]?.message?.content?.trim() || aiReply;
-            } catch (e2) {
-              console.error('[STT] Both models failed:', e2.message);
-            }
+            await pool.query(
+              'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+              [guildId, textChannel?.id || 'voice', String(targetUserId), speakerName, transcript]
+            );
+          } catch (dbErr) {
+            console.error('[DB] STT user message save error:', dbErr.message);
           }
+
+          const researchMode = shouldUseResearchMode(transcript);
+          const tavilyResults = researchMode ? await searchWithTavily(transcript, 3) : [];
+
+          let aiReply = 'Hindi ko nasagot, ghorl.';
+          if (researchMode && tavilyResults.length === 0) {
+            aiReply = 'Teh latest yan pero walang source ngayon. Wag hula-hula, ulit ka mamaya.';
+          } else {
+            const botVC = guild?.members?.me?.voice?.channel || null;
+            const voiceMembers = botVC
+              ? botVC.members.filter((m) => !m.user.bot).map((m) => m.displayName || m.user.username)
+              : [];
+
+            const discordContext =
+              `\n[DISCORD AWARENESS]: Voice mode chat.\n` +
+              `Server: ${guild?.name || 'unknown'}\n` +
+              `Current text relay channel: #${textChannel?.name || 'unknown'}\n` +
+              `Speaker nickname: ${speakerName}\n` +
+              'Rule: Treat STT interaction as normal chat memory.';
+
+            aiReply = await callGroqChat(
+              transcript,
+              String(targetUserId),
+              textChannel?.id || null,
+              voiceMembers,
+              {
+                fastMode: true,
+                researchContext: tavilyResults,
+                forceResearchGrounding: researchMode,
+                discordContext
+              }
+            );
+          }
+
+          if (researchMode && tavilyResults.length > 0 && textChannel?.isTextBased?.()) {
+            const sourceLines = tavilyResults.slice(0, 3).map((r) => `- [${r.title}](${r.url})`);
+            await textChannel.send(`Eto source mo, basahin mo rin ha.\n${sourceLines.join('\n')}`).catch(() => { });
+          }
+
+          try {
+            await pool.query(
+              'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+              [guildId, textChannel?.id || 'voice', client.user.id, client.user.username, aiReply]
+            );
+          } catch (dbErr) {
+            console.error('[DB] STT bot reply save error:', dbErr.message);
+          }
+
           console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}"`);
           await speakMessage(guildId, aiReply, String(targetUserId));
 
