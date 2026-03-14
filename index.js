@@ -420,11 +420,29 @@ const {
       recentNames = [];
     }
 
+    const botVoice = message.guild.members.me?.voice?.channel || null;
+    const authorVoice = message.member?.voice?.channel || null;
+    const voiceChannels = message.guild.channels.cache
+      .filter((ch) => typeof ch.isVoiceBased === 'function' && ch.isVoiceBased())
+      .map((ch) => {
+        const members = ch.members
+          ? ch.members
+              .filter((m) => !m.user.bot)
+              .map((m) => m.displayName || m.user?.globalName || m.user?.username || m.user?.tag)
+              .slice(0, 8)
+          : [];
+        return `${ch.name}: [${members.join(', ') || 'empty'}]`;
+      })
+      .slice(0, fastMode ? 8 : 20);
+
     return (
       `\n[DISCORD AWARENESS]:\n` +
       `Server: ${guildName}\n` +
       `Current channel: #${currentChannelName}\n` +
+      `Bot current VC: ${botVoice ? botVoice.name : 'none'}\n` +
+      `Author current VC: ${authorVoice ? authorVoice.name : 'none'}\n` +
       `Known text channels: ${channelNames.join(', ') || 'none'}\n` +
+      `Voice channels and members: ${voiceChannels.join(' | ') || 'none'}\n` +
       `Recent nicknames in this channel: ${recentNames.join(', ') || 'none'}\n` +
       `Rule: Use nicknames and channel names naturally when relevant.`
     );
@@ -502,6 +520,7 @@ const {
     const lower = (text || '').toLowerCase();
     if (!lower) return false;
     return (
+      lower.includes('bring') ||
       lower.includes('dalhin mo') ||
       lower.includes('isama mo') ||
       lower.includes('sama mo') ||
@@ -696,8 +715,13 @@ const {
     const candidates = listMoveCandidateVoiceChannels(message.guild);
     if (candidates.length === 0) return false;
     const aiIntent = await detectVoiceMoveIntentWithAI(rawText, candidates);
+    const rawIdMatch = String(rawText || '').match(/\b(\d{17,20})\b/);
+    const channelIdFromText = rawIdMatch ? rawIdMatch[1] : null;
     let hasIntent = isNaturalVoiceMoveIntent(rawText) || aiIntent.move;
     if (!hasIntent && hasVoiceMoveCueWords(rawText)) {
+      hasIntent = true;
+    }
+    if (!hasIntent && channelIdFromText) {
       hasIntent = true;
     }
     if (!hasIntent) return false;
@@ -714,6 +738,13 @@ const {
     );
     if (mentionedVoiceChannel) {
       target = mentionedVoiceChannel;
+    }
+
+    if (!target && channelIdFromText) {
+      const byId = message.guild.channels.cache.get(channelIdFromText) || null;
+      if (byId && typeof byId.isVoiceBased === 'function' && byId.isVoiceBased()) {
+        target = byId;
+      }
     }
 
     if (!target && (
@@ -766,21 +797,28 @@ const {
       target = findVoiceChannelByName(candidates, rawText);
     }
 
-    if (!target || target.id === botVC.id) {
+    const requestedNames = extractRequestedMemberNames(rawText);
+    const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring || requestedNames.length > 0;
+    if (!target && shouldBring) {
+      // "bring X here" defaults to bot's current VC
+      target = botVC;
+    }
+
+    if (!target) {
       await message.reply('Teh, wala akong matinong target na malilipatan dyan. Sabihin mo kung saan talaga.');
       return true;
     }
 
     try {
-      try { connection.destroy(); } catch { }
-      setSavedVoiceState({ channelId: target.id, guildId: message.guild.id });
-      await saveVoiceStateToDB(message.guild.id, target.id);
-      voiceReconnectAttempts = 0;
-      joinAndWatch(target.id, message.guild.id, message.guild.voiceAdapterCreator);
+      if (target.id !== botVC.id) {
+        try { connection.destroy(); } catch { }
+        setSavedVoiceState({ channelId: target.id, guildId: message.guild.id });
+        await saveVoiceStateToDB(message.guild.id, target.id);
+        voiceReconnectAttempts = 0;
+        joinAndWatch(target.id, message.guild.id, message.guild.voiceAdapterCreator);
+      }
 
       let movedNames = [];
-      const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring;
-      const requestedNames = extractRequestedMemberNames(rawText);
       if (shouldBring || requestedNames.length > 0) {
         try { await message.guild.members.fetch(); } catch { }
 
