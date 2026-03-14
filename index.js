@@ -1204,13 +1204,47 @@ const {
 
           // Occasional short epal reply in active channels.
           if (Math.random() < 0.4) {
-            const epalLines = [
-              'HAHAHA oy tuloy niyo pa, nakikinig ako.',
-              'Epal lang ako saglit, ang juicy ng usapan niyo.',
-              'Sige pa, dagdagan niyo pa yung chismis.',
-              'Noted mga teh, pak na pak yung update.'
-            ];
-            const epal = epalLines[Math.floor(Math.random() * epalLines.length)];
+            const recentHuman = [...recent.values()]
+              .filter((m) => !m.author?.bot)
+              .slice(0, 6)
+              .map((m) => `${m.member?.displayName || m.author?.globalName || m.author?.username || 'unknown'}: ${(m.content || '').replace(/\s+/g, ' ').slice(0, 140)}`)
+              .join(' || ');
+
+            let epal = null;
+            try {
+              const aiRes = await performChatRequest({
+                model: 'llama-3.1-8b-instant',
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      'You are JanJan, rude Taglish beki. Create one short chismis interjection based on recent conversation context. ' +
+                      'Max 12 words. Epal/funny/mataray tone. No explanation.'
+                  },
+                  {
+                    role: 'user',
+                    content: `Recent convo: ${recentHuman || 'none'}`
+                  }
+                ],
+                temperature: 0.85,
+                max_tokens: 45
+              });
+              epal = aiRes.data?.choices?.[0]?.message?.content?.trim() || null;
+              if (epal) epal = epal.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+            } catch {
+              epal = null;
+            }
+
+            if (!epal) {
+              const epalLines = [
+                'HAHAHA oy tuloy niyo pa, nakikinig ako.',
+                'Epal lang ako saglit, ang juicy ng usapan niyo.',
+                'Sige pa, dagdagan niyo pa yung chismis.',
+                'Noted mga teh, pak na pak yung update.'
+              ];
+              epal = epalLines[Math.floor(Math.random() * epalLines.length)];
+            }
+
             await channel.send(epal).catch(() => { });
           }
         } catch {
