@@ -586,6 +586,11 @@ const {
     const lower = (text || '').toLowerCase();
     if (!lower) return false;
     return (
+      lower.includes('disconnect') ||
+      lower.includes('dc ') ||
+      lower.includes(' alis') ||
+      lower.startsWith('alis') ||
+      lower.includes('leave') ||
       lower.includes('isama') ||
       lower.includes('dalhin') ||
       lower.includes('bring') ||
@@ -597,6 +602,7 @@ const {
       lower.includes('paakyat') ||
       lower.includes('move') ||
       lower.includes('punta') ||
+      lower.includes('akyat') ||
       lower.includes('baba') ||
       lower.includes('taas') ||
       lower.includes('sa vc ko') ||
@@ -606,6 +612,19 @@ const {
       lower.includes('sa akin') ||
       lower.includes('dito') ||
       lower.includes('sunod')
+    );
+  }
+
+  function isDisconnectIntent(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return (
+      lower.includes('disconnect') ||
+      lower.includes('pa disconnect') ||
+      lower.includes('dc mo') ||
+      lower.includes('kick mo') ||
+      lower.includes('alisin mo') ||
+      lower.includes('alis ')
     );
   }
 
@@ -745,15 +764,29 @@ const {
 
   async function tryNaturalVoiceMoveFromChat(message, rawText) {
     if (!message.guild) return false;
+    const lower = String(rawText || '').toLowerCase();
+    const rawIdMatch = lower.match(/\b(\d{17,20})\b/);
+    const channelIdFromText = rawIdMatch ? rawIdMatch[1] : null;
+    const requestedNames = extractRequestedMemberNames(rawText);
+    const shouldBringByText = shouldBringMentionedMembers(rawText);
+    const hasPreSignal =
+      isNaturalVoiceMoveIntent(rawText) ||
+      hasVoiceMoveCueWords(rawText) ||
+      shouldBringByText ||
+      Boolean(channelIdFromText) ||
+      Boolean(message.mentions?.channels?.size) ||
+      isDisconnectIntent(rawText);
+    if (!hasPreSignal) return false;
+
     const candidates = listMoveCandidateVoiceChannels(message.guild);
     if (candidates.length === 0) return false;
     const aiIntent = await detectVoiceMoveIntentWithAI(rawText, candidates);
-    const rawIdMatch = String(rawText || '').match(/\b(\d{17,20})\b/);
-    const channelIdFromText = rawIdMatch ? rawIdMatch[1] : null;
-    const requestedNames = extractRequestedMemberNames(rawText);
-    const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring || requestedNames.length > 0;
+    const shouldBring = shouldBringByText || aiIntent.bring || requestedNames.length > 0;
     let hasIntent = isNaturalVoiceMoveIntent(rawText) || aiIntent.move || shouldBring;
     if (!hasIntent && channelIdFromText) {
+      hasIntent = true;
+    }
+    if (!hasIntent && isDisconnectIntent(rawText)) {
       hasIntent = true;
     }
     if (!hasIntent) return false;
@@ -761,8 +794,6 @@ const {
     const connection = getVoiceConnection(message.guild.id);
     const botVC = message.guild.members.me?.voice?.channel || null;
     if (!connection || !botVC) return false;
-
-    const lower = (rawText || '').toLowerCase();
 
     let target = null;
     const mentionedVoiceChannel = message.mentions.channels.find(
@@ -781,6 +812,8 @@ const {
 
     if (!target && (
       lower.includes('sa baba') ||
+      lower === 'baba' ||
+      lower.endsWith(' baba') ||
       lower.includes('ibaba') ||
       lower.includes('pababa') ||
       aiIntent.target === 'DOWN'
@@ -793,6 +826,8 @@ const {
 
     if (!target && (
       lower.includes('sa taas') ||
+      lower === 'akyat' ||
+      lower.endsWith(' akyat') ||
       lower.includes('itaas') ||
       lower.includes('pakyat') ||
       lower.includes('papakyat') ||
@@ -835,6 +870,62 @@ const {
       const authorVC = message.member?.voice?.channel || null;
       if (shouldTargetAuthorVoice(rawText) && authorVC) target = authorVC;
       else target = botVC;
+    }
+
+    // Natural disconnect flow: "pa disconnect si X", "alis si X", etc.
+    if (isDisconnectIntent(rawText)) {
+      try { await message.guild.members.fetch(); } catch { }
+      const membersToDisconnect = [];
+      const seenMemberIds = new Set();
+
+      if (message.mentions?.users?.size > 0) {
+        for (const id of message.mentions.users.keys()) {
+          if (id === client.user.id) continue;
+          const member = await message.guild.members.fetch(id).catch(() => null);
+          if (member && !seenMemberIds.has(member.id)) {
+            seenMemberIds.add(member.id);
+            membersToDisconnect.push(member);
+          }
+        }
+      }
+      const namedMembers = resolveMembersByRequestedNames(message.guild, requestedNames);
+      for (const m of namedMembers) {
+        if (!seenMemberIds.has(m.id)) {
+          seenMemberIds.add(m.id);
+          membersToDisconnect.push(m);
+        }
+      }
+
+      if (membersToDisconnect.length > 0) {
+        const disconnected = [];
+        for (const m of membersToDisconnect) {
+          if (!m.voice?.channel) continue;
+          try {
+            await m.voice.setChannel(null, 'Natural chat command: disconnect member from VC');
+            disconnected.push(m.displayName || m.user?.username || m.user?.tag);
+          } catch { }
+        }
+        if (disconnected.length > 0) {
+          await message.reply(`Ayan, disconnected na sina ${disconnected.join(', ')}. Next utos, bilis.`);
+          return true;
+        }
+      }
+
+      // If asking the bot itself to leave (e.g. "alis @JanJan")
+      const asksBotToLeave =
+        message.mentions?.users?.has(client.user.id) ||
+        lower.includes('alis ka') ||
+        lower.includes('disconnect ka') ||
+        lower.includes('leave ka') ||
+        lower.includes('umalis ka');
+      if (asksBotToLeave) {
+        setSavedVoiceState(null);
+        clearScheduledVoiceRejoin();
+        await clearVoiceStateFromDB();
+        try { connection.destroy(); } catch { }
+        await message.reply('Sige, alis muna ako sa VC. Tawagin mo ko pag kailangan mo ulit.');
+        return true;
+      }
     }
 
     if (!target) {
