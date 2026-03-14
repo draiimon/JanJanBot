@@ -1122,11 +1122,10 @@ const {
     if (!forceDetectChannel && Math.random() > 0.3) return false;
     ambientChatState.set(message.channel.id, now);
 
-    // If name is mentioned, always react first (epal/chismosa laugh-heavy set).
-    const reactions = forceDetectChannel
-      ? ['😂', '🤣', '😆', '👀', '🙄', '💅']
-      : ['😏', '💅', '👀', '🔥', '🙄'];
-    const pick = reactions[Math.floor(Math.random() * reactions.length)];
+    // AI-contextual reaction first.
+    const moodContext = `${rawText}`;
+    const mood = await classifyMoodFromContext(moodContext);
+    const pick = pickReactionByMood(mood);
     await message.react(pick).catch(() => { });
 
     const reactOnly = forceDetectChannel ? false : Math.random() < 0.7;
@@ -1197,8 +1196,13 @@ const {
           const target = [...recent.values()].find((m) => !m.author?.bot) || null;
           if (!target) continue;
 
-          const reactions = ['😂', '🤣', '😆', '👀', '💅', '🙄'];
-          const pick = reactions[Math.floor(Math.random() * reactions.length)];
+          const moodInput = [...recent.values()]
+            .filter((m) => !m.author?.bot)
+            .slice(0, 6)
+            .map((m) => (m.content || '').replace(/\s+/g, ' ').slice(0, 140))
+            .join(' || ');
+          const mood = await classifyMoodFromContext(moodInput);
+          const pick = pickReactionByMood(mood);
           await target.react(pick).catch(() => { });
           channelLastChismisReactAt.set(channelId, now);
 
@@ -1252,6 +1256,48 @@ const {
         }
       }
     }, 15 * 1000).unref?.();
+  }
+
+  async function classifyMoodFromContext(text = '') {
+    const input = String(text || '').trim();
+    if (!input) return 'neutral';
+    try {
+      const res = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Classify chat mood from text. Reply ONLY one token: happy, sad, angry, funny, cringe, neutral.'
+          },
+          { role: 'user', content: input.slice(0, 500) }
+        ],
+        temperature: 0,
+        max_tokens: 5
+      });
+      const raw = (res.data?.choices?.[0]?.message?.content || '').toLowerCase();
+      if (raw.includes('happy')) return 'happy';
+      if (raw.includes('sad')) return 'sad';
+      if (raw.includes('angry')) return 'angry';
+      if (raw.includes('funny')) return 'funny';
+      if (raw.includes('cringe')) return 'cringe';
+      return 'neutral';
+    } catch {
+      return 'neutral';
+    }
+  }
+
+  function pickReactionByMood(mood = 'neutral') {
+    const pools = {
+      happy: ['😂', '🤣', '😆', '🔥', '✨'],
+      sad: ['🥲', '😢', '💔', '🫂', '🥹'],
+      angry: ['😤', '🙄', '😒', '💢', '😑'],
+      funny: ['😂', '🤣', '😹', '💅', '👀'],
+      cringe: ['🙄', '😬', '🫠', '😶', '💀'],
+      neutral: ['👀', '💅', '😏', '🔥', '🙄']
+    };
+    const list = pools[mood] || pools.neutral;
+    return list[Math.floor(Math.random() * list.length)];
   }
 
   function getOrCreatePlayer(guildId) {
