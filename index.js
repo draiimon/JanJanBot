@@ -1420,7 +1420,8 @@ const {
                 fastMode: true,
                 researchContext: tavilyResults,
                 forceResearchGrounding: researchMode,
-                discordContext
+                discordContext,
+                preferredDisplayName: speakerName
               }
             );
           }
@@ -1901,6 +1902,7 @@ const {
     const forceResearchGrounding = Boolean(options.forceResearchGrounding);
     const forceSexualGuard = Boolean(options.forceSexualGuard);
     const forceFlirtyMode = Boolean(options.forceFlirtyMode);
+    const preferredDisplayName = typeof options.preferredDisplayName === 'string' ? options.preferredDisplayName.trim() : '';
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
@@ -1928,6 +1930,7 @@ const {
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
+        'Name rule: Sa server context, nickname/display name ang gamitin mo. Iwasan ang true username/tag kapag may nickname na available. ' +
         'Basahin at unawain muna ang buong message bago mag-reply; intent first lagi bago attitude. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
@@ -1997,6 +2000,7 @@ const {
     const systemPrompt =
       `${masterPersonaDNA}\n` +
       `[SUBCONSCIOUS_IDENTITY]: Ikaw si JanJan Versa (ID: <@${client.user.id}>). Ang kausap mo ngayon ay si <@${authorId}>. ` +
+      (preferredDisplayName ? `\n[CURRENT USER PREFERRED NAME]: ${preferredDisplayName}\nUse this name naturally when addressing the user.\n` : '') +
       behaviorPrompt +
       channelSummary +
       userFacts +
@@ -2509,7 +2513,13 @@ const {
             let voiceMembers = [];
             const myVC = message.guild.members.me.voice.channel;
             if (myVC) voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
-            const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
+            const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers, {
+              preferredDisplayName:
+                message.member?.displayName ||
+                message.author.globalName ||
+                message.author.username ||
+                message.author.tag
+            });
             await speakMessage(message.guild.id, aiResponse, message.author.id);
             await message.react('ðŸ¤–').catch(() => { });
           } else {
@@ -2807,7 +2817,13 @@ const {
             }
           }
 
-          const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
+          const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers, {
+            preferredDisplayName:
+              message.member?.displayName ||
+              message.author.globalName ||
+              message.author.username ||
+              message.author.tag
+          });
           await message.reply({ content: `# ROAST TIME! ðŸ’…\n${mentions}\n\n${aiText}` });
 
           // Speak the roast if in voice
@@ -2939,7 +2955,12 @@ const {
         mentionContext,
         forceResearchGrounding: researchMode,
         forceSexualGuard: sexualGuardMode,
-        forceFlirtyMode: flirtyMode
+        forceFlirtyMode: flirtyMode,
+        preferredDisplayName:
+          message.member?.displayName ||
+          message.author.globalName ||
+          message.author.username ||
+          message.author.tag
       });
 
       if (reply && reply.length > 0) {
