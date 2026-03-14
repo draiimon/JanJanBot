@@ -2383,8 +2383,21 @@ const {
   }
 
   // Quick Groq call for AI-generated VC announcements (fast, short, adaptive via DB facts)
-  const lastVCAnnouncementByGuild = new Map(); // key: guildId:type -> text
-  async function generateVCAnnouncement(type, displayName, userId = null, guildId = 'global', complimentWord = 'astig') {
+  const lastVCAnnouncementByGuild = new Map(); // key: guildId:type[:rage] -> text
+  const vcRapidActivity = new Map(); // key: guildId:userId -> { stamps: number[] }
+  const vcAnnouncementBuffers = new Map(); // guildId -> { events: [], timer: Timeout | null, flushing: boolean }
+
+  function trackVCRapidActivity(guildId, userId) {
+    const key = `${guildId}:${userId}`;
+    const now = Date.now();
+    const windowMs = 90000;
+    const current = vcRapidActivity.get(key) || { stamps: [] };
+    const stamps = [...current.stamps, now].filter((ts) => now - ts <= windowMs);
+    vcRapidActivity.set(key, { stamps });
+    return stamps.length >= 3;
+  }
+
+  async function generateVCAnnouncement(type, displayName, userId = null, guildId = 'global', complimentWord = 'astig', rageMode = false) {
     const groqKey = GROQ_KEYS.find(k => k);
     if (!groqKey) return null;
     try {
@@ -2395,15 +2408,16 @@ const {
           userFacts = userRes.rows[0]?.facts || '';
         } catch { }
       }
-      const previous = lastVCAnnouncementByGuild.get(`${guildId}:${type}`) || '';
+      const previousKey = `${guildId}:${type}:${rageMode ? 'rage' : 'normal'}`;
+      const previous = lastVCAnnouncementByGuild.get(previousKey) || '';
 
       const prompt = type === 'join'
         ? `Gumawa ng ISANG maikling rude beki VC JOIN line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
           `Include compliment flavor like "ang ${complimentWord} naman neto bes" naturally. ` +
-          `Style: mataray, witty, kanal humor. Person context: ${userFacts || 'none'}. ` +
+          `Style: ${rageMode ? 'sobrang galit, mataray, maanghang, may murang Pinoy pero hindi hate speech' : 'mataray, witty, kanal humor'}. Person context: ${userFacts || 'none'}. ` +
           `Huwag ulitin itong previous style/line: "${previous}". Walang explanation.`
         : `Gumawa ng ISANG maikling rude BACKSTAB VC LEAVE line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
-          `Style: mataray, mapanlait, funny. Person context: ${userFacts || 'none'}. ` +
+          `Style: ${rageMode ? 'sobrang galit, mataray, maanghang, may murang Pinoy pero hindi hate speech' : 'mataray, mapanlait, funny'}. Person context: ${userFacts || 'none'}. ` +
           `Huwag ulitin itong previous style/line: "${previous}". Walang explanation.`;
 
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
@@ -2419,12 +2433,141 @@ const {
       if (!text) return null;
       text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
       if (text.length > 180) text = `${text.slice(0, 177)}...`;
-      lastVCAnnouncementByGuild.set(`${guildId}:${type}`, text);
+      lastVCAnnouncementByGuild.set(previousKey, text);
       return text;
     } catch (err) {
       console.error('[VOICE STATE] AI generation error:', err.message);
       return null;
     }
+  }
+
+  function getOrCreateVCBuffer(guildId) {
+    const existing = vcAnnouncementBuffers.get(guildId);
+    if (existing) return existing;
+    const created = { events: [], timer: null, flushing: false };
+    vcAnnouncementBuffers.set(guildId, created);
+    return created;
+  }
+
+  function compressVCEvents(events) {
+    const byUser = new Map();
+    for (const ev of events) byUser.set(ev.userId, ev);
+    return [...byUser.values()];
+  }
+
+  async function buildBatchVCAnnouncement(guildId, events) {
+    const compact = compressVCEvents(events);
+    if (compact.length === 0) return null;
+
+    if (compact.length === 1) {
+      const ev = compact[0];
+      if (ev.type === 'join') {
+        const fallbackJoin = ev.rageMode
+          ? [
+            `Hoy ${ev.displayName}, labas-pasok ka na naman? Ano ba talaga trip mo, teh?`,
+            `${ev.displayName}, pumirme ka nga. VC to, hindi revolving door, gago ka ba?`,
+            `Ayan si ${ev.displayName}, balik na naman. Desisyonan mo buhay mo, teh.`
+          ]
+          : [
+            `Ayan na si ${ev.displayName}, ang ${ev.complimentWord} naman neto bes.`,
+            `${ev.displayName} joined. Gulo mode ulit, mga accla.`,
+            `Uy ${ev.displayName}, sa wakas dumating ka rin.`
+          ];
+        const aiJoin = await generateVCAnnouncement('join', ev.displayName, ev.userId, guildId, ev.complimentWord, ev.rageMode);
+        return aiJoin || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
+      }
+
+      const fallbackLeave = ev.rageMode
+        ? [
+          `Labas ulit si ${ev.displayName}. Teh, ano ba yan, pasok-labas ka parang sirang pinto.`,
+          `${ev.displayName} left na naman. Kalmahan mo, hindi ka makukulong dito, bwisit.`,
+          `Ayan na, umalis na naman si ${ev.displayName}. Gulo mo today, teh.`
+        ]
+        : [
+          `Umalis si ${ev.displayName}. Pwede na mag-backstab, charot.`,
+          `${ev.displayName} left. Tahimik na, pero mas masarap mang-lait.`,
+          `Ayun umalis si ${ev.displayName}, next issue please.`
+        ];
+      const aiLeave = await generateVCAnnouncement('leave', ev.displayName, ev.userId, guildId, ev.complimentWord, ev.rageMode);
+      return aiLeave || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
+    }
+
+    const rageMode = compact.some((ev) => ev.rageMode) || compact.length >= 3;
+    const joins = compact.filter((ev) => ev.type === 'join');
+    const leaves = compact.filter((ev) => ev.type === 'leave');
+    const joinNames = joins.map((ev) => ev.displayName);
+    const leaveNames = leaves.map((ev) => ev.displayName);
+    const joinList = joinNames.join(', ') || 'wala';
+    const leaveList = leaveNames.join(', ') || 'wala';
+    const prevKey = `${guildId}:batch:${rageMode ? 'rage' : 'normal'}`;
+    const previous = lastVCAnnouncementByGuild.get(prevKey) || '';
+    const groqKey = GROQ_KEYS.find((k) => k);
+
+    if (groqKey) {
+      try {
+        const prompt =
+          `Gumawa ng ISANG VC group announcement line sa Taglish. Max 24 words, 1 sentence lang. ` +
+          `Context: may sabay-sabay na movement sa voice channel. Pumasok: ${joinList}. Umalis: ${leaveList}. ` +
+          `Rule: group-level lang, wag individual greetings kada tao. Dapat may vibe na nalilito siya kung sino ang babatiin kapag sabay-sabay. ` +
+          `Style: ${rageMode ? 'sobrang galit, mataray, may konting mura, funny kanal' : 'mataray, witty, mabilis'}. ` +
+          `Huwag ulitin ito: "${previous}". Walang paliwanag.`;
+
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          model: 'llama-3.1-8b-instant',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 90,
+          temperature: 1.0
+        }, {
+          headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+          timeout: 4000
+        });
+
+        let text = response.data.choices[0]?.message?.content?.trim() || '';
+        text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+        if (text) {
+          if (text.length > 190) text = `${text.slice(0, 187)}...`;
+          lastVCAnnouncementByGuild.set(prevKey, text);
+          return text;
+        }
+      } catch (err) {
+        console.error('[VOICE STATE] Batch AI generation error:', err.message);
+      }
+    }
+
+    if (rageMode) {
+      if (joins.length && leaves.length) return `Ano ba 'to, nalilito na ko kung sino babatiin: pasok si ${joinList}, labas si ${leaveList}, gulo nyo, mga teh.`;
+      if (joins.length) return `Sabay-sabay kayong pumasok: ${joinList}. Nalilito na ko kung sino uunahin, kalma kayo, accla.`;
+      return `Sabay-sabay din kayong umalis: ${leaveList}. Nalilito na ko sa inyo, walkout challenge ba 'to, bwisit?`;
+    }
+
+    if (joins.length && leaves.length) return `Update lang, nalilito na ko kung sino babatiin: pumasok si ${joinList}, umalis si ${leaveList}.`;
+    if (joins.length) return `Ayan, sabay pumasok sina ${joinList}. Nalilito na ko kung sino uunahin batiin, beshies.`;
+    return `Sabay umalis sina ${leaveList}. Nalito na rin ako sa flow nyo, tahimik na ulit for now.`;
+  }
+
+  function queueVCAnnouncement(guildId, event) {
+    const state = getOrCreateVCBuffer(guildId);
+    state.events.push(event);
+    if (state.timer) clearTimeout(state.timer);
+
+    state.timer = setTimeout(async () => {
+      if (state.flushing) return;
+      state.flushing = true;
+      state.timer = null;
+      const batch = state.events.splice(0, state.events.length);
+
+      try {
+        const msg = await buildBatchVCAnnouncement(guildId, batch);
+        if (msg) {
+          console.log(`[VOICE STATE] batched ${batch.length} events -> "${msg}"`);
+          speakMessage(guildId, msg, null);
+        }
+      } catch (err) {
+        console.error('[VOICE STATE] queue flush error:', err.message);
+      } finally {
+        state.flushing = false;
+      }
+    }, 1400);
   }
 
   client.on('voiceStateUpdate', async (oldState, newState) => {
@@ -2470,38 +2613,24 @@ const {
       const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
       const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
       const complimentWord = await inferComplimentWord(member.id, displayName);
+      const isRapidToggle = (joinedBotVC || leftBotVC) ? trackVCRapidActivity(guildId, member.id) : false;
 
       if (joinedBotVC) {
-        // === USER JOINED ===
-        let msg;
-        const fallbackJoin = [
-          `Ayan na si ${displayName}, ang ${complimentWord} naman neto bes.`,
-          `${displayName} joined. Gulo mode ulit, mga accla.`,
-          `Uy ${displayName}, sa wakas dumating ka rin.`
-        ];
-
-        const aiJoin = await generateVCAnnouncement('join', displayName, member.id, guildId, complimentWord);
-        msg = aiJoin || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
-
-        console.log(`[VOICE STATE] ${displayName} joined -> "${msg}"`);
-        // Force Angelo Tagalog voice for VC announcements
-        speakMessage(guildId, msg, null);
-
+        queueVCAnnouncement(guildId, {
+          type: 'join',
+          userId: member.id,
+          displayName,
+          complimentWord,
+          rageMode: isRapidToggle
+        });
       } else if (leftBotVC) {
-        // === USER LEFT ===
-        let msg;
-        const fallbackLeave = [
-          `Umalis si ${displayName}. Pwede na mag-backstab, charot.`,
-          `${displayName} left. Tahimik na, pero mas masarap mang-lait.`,
-          `Ayun umalis si ${displayName}, next issue please.`
-        ];
-
-        const aiLeave = await generateVCAnnouncement('leave', displayName, member.id, guildId, complimentWord);
-        msg = aiLeave || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
-
-        console.log(`[VOICE STATE] ${displayName} left -> "${msg}"`);
-        // Force Angelo Tagalog voice for VC announcements
-        speakMessage(guildId, msg, null);
+        queueVCAnnouncement(guildId, {
+          type: 'leave',
+          userId: member.id,
+          displayName,
+          complimentWord,
+          rageMode: isRapidToggle
+        });
       }
     } catch (err) {
       console.error('[VOICE STATE] Error:', err.message);
