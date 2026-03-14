@@ -1542,6 +1542,34 @@ const {
     return 'Gets ko tanong mo, pero kulang context para sakto. Bigyan mo ko ng 1-2 detalye pa, teh.';
   }
 
+  function isLikelyQuestion(text = '') {
+    const t = String(text || '').toLowerCase();
+    if (!t.trim()) return false;
+    if (t.includes('?')) return true;
+    return /\b(ano|anong|pano|paano|bakit|saan|kailan|how|what|why|where|when|which|latest|update)\b/.test(t);
+  }
+
+  function isMostlyInsultLine(text = '') {
+    const t = String(text || '').toLowerCase().trim();
+    if (!t) return false;
+    const insultMarkers = ['gago', 'tanga', 'ulol', 'bobo', 'pakyu', 'putang', 'bwisit'];
+    const hasInsult = insultMarkers.some((w) => t.includes(w));
+    const tokenCount = t.split(/\s+/).filter(Boolean).length;
+    const hasInfoCue = /\b(kasi|dahil|eto|ito|ganito|ganto|una|second|step|try|check|source|latest|update)\b/.test(t);
+    return hasInsult && tokenCount <= 14 && !hasInfoCue;
+  }
+
+  function enforceDirectAnswerFirst(userText = '', replyText = '') {
+    const user = String(userText || '');
+    const reply = String(replyText || '').trim();
+    if (!reply) return reply;
+    if (!isLikelyQuestion(user)) return reply;
+    if (isMostlyInsultLine(reply)) {
+      return buildCoherentFallback(user);
+    }
+    return reply;
+  }
+
   function sanitizeOutboundText(text = '') {
     let out = String(text || '').trim();
     if (!out) return out;
@@ -2633,6 +2661,8 @@ const {
         'Conversation structure mo lagi: (1) intindihin intent ng latest message, (2) sagot agad, (3) optional 1 short follow-up kung kailangan. ' +
         'Helpful first, attitude second: unahin ang malinaw na sagot bago banat. ' +
         'Parang tropa ka makipag-usap: natural, direct, hindi robotic, hindi essay mode. ' +
+        'CODEX-LIKE CONTRACT: Sentence 1 must be the direct answer. Sentence 2 can be attitude/personality if needed. ' +
+        'Kapag question ang user, bawal puro insulto-only response; dapat may actual answer or clarifying question. ' +
         'Natural Tagalog/Taglish grammar ang gamit mo; iwasan ang pilit o awkward na phrasing. ' +
         'Huwag ulitin ang parehong linya o catchphrase kung hindi kailangan. ' +
         'Context lock: sagot dapat sa latest user message, hindi sa lumang chika kung hindi relevant. ' +
@@ -2822,6 +2852,7 @@ const {
       'Huwag gawing absolute truth ang unverified claims. Kung uncertain, aminin ang uncertainty at magtanong ng short clarifier.' +
       '\n[OUTPUT STYLE]: 1-2 short sentences lang unless user explicitly asked for long format. Dapat coherent at direct sa latest message.' +
       '\n[HUMANLIKE FLOW]: intent-first, direct answer, then optional one-line follow-up. No rambling, no random topic jump.' +
+      '\n[DIRECTNESS RULE]: If user asks a question, first sentence must answer it or ask one precise clarifying question.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
@@ -2872,6 +2903,7 @@ const {
           finalResult = enforceTropaResponseShape(userMessage, finalResult, {
             isResearch: researchContext.length > 0 || forceResearchGrounding
           });
+          finalResult = enforceDirectAnswerFirst(userMessage, finalResult);
           console.log(`[CLEANER] Raw: ${reply.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
 
           // If after cleaning we have nothing, this model only gave us thoughts. TRY NEXT MODEL.
