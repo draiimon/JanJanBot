@@ -2615,10 +2615,11 @@ const {
           ]
         );
 
-        // Auto trigger summary every 20 messages in that channel
+        // Auto trigger summary; deeper channels get more frequent memory refresh.
         const countRes = await pool.query('SELECT COUNT(*) FROM messages WHERE channel_id = $1', [message.channel.id]);
         const msgCount = parseInt(countRes.rows[0].count);
-        if (msgCount % 20 === 0) {
+        const summaryEvery = ALWAYS_DEEP_CONTEXT_CHANNEL_IDS.has(message.channel.id) ? 8 : 20;
+        if (msgCount % summaryEvery === 0) {
           updateChannelSummary(message.channel.id);
         }
       } catch (dbErr) {
@@ -3210,7 +3211,8 @@ const {
       // Queue AI replies per channel so fast message bursts are processed in order.
       await enqueueChannelAI(message.channel.id, async () => {
       const backlog = aiChannelQueueDepths.get(message.channel.id) || 0;
-      const fastMode = backlog > 1;
+      // Let JanJan "think" more before falling back to fast mode.
+      const fastMode = backlog > 2;
 
       let content = message.content || '';
       if (isMention) {
@@ -3313,6 +3315,10 @@ const {
                 safeReply
               ]
             );
+          if (ALWAYS_DEEP_CONTEXT_CHANNEL_IDS.has(message.channel.id)) {
+            // Keep memory fresh in high-activity channels.
+            updateChannelSummary(message.channel.id);
+          }
         } catch (dbErr) {
           console.error('[DB] Bot reply save error:', dbErr.message);
         }
