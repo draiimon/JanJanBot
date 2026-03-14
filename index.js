@@ -1557,6 +1557,33 @@ const {
     return out;
   }
 
+  function enforceTropaResponseShape(userText = '', replyText = '', options = {}) {
+    const isResearch = Boolean(options.isResearch);
+    const maxSentences = isResearch ? 3 : 2;
+    let out = String(replyText || '').trim();
+    if (!out) return out;
+
+    const normalized = cleanupGeneratedLine(out, { allowExplicit: true });
+    const chunks = normalized
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (chunks.length > maxSentences) {
+      out = chunks.slice(0, maxSentences).join(' ');
+    } else {
+      out = normalized;
+    }
+
+    const input = String(userText || '').trim();
+    if (/\b(kamusta|kumusta|hi|hello|yo)\b/i.test(input)) {
+      // Keep greetings friendly/direct and avoid random hostility.
+      out = out.replace(/\bgago\b/gi, 'teh').trim();
+    }
+
+    return out;
+  }
+
   function escapeRegex(text = '') {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -2557,6 +2584,9 @@ const {
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
+        'Conversation structure mo lagi: (1) intindihin intent ng latest message, (2) sagot agad, (3) optional 1 short follow-up kung kailangan. ' +
+        'Helpful first, attitude second: unahin ang malinaw na sagot bago banat. ' +
+        'Parang tropa ka makipag-usap: natural, direct, hindi robotic, hindi essay mode. ' +
         'Natural Tagalog/Taglish grammar ang gamit mo; iwasan ang pilit o awkward na phrasing. ' +
         'Huwag ulitin ang parehong linya o catchphrase kung hindi kailangan. ' +
         'Context lock: sagot dapat sa latest user message, hindi sa lumang chika kung hindi relevant. ' +
@@ -2743,6 +2773,7 @@ const {
     const priorityRule = '\n[CRITICAL]: I-prioritize ang verified Discord context + recent chat history + user memory. ' +
       'Huwag gawing absolute truth ang unverified claims. Kung uncertain, aminin ang uncertainty at magtanong ng short clarifier.' +
       '\n[OUTPUT STYLE]: 1-2 short sentences lang unless user explicitly asked for long format. Dapat coherent at direct sa latest message.' +
+      '\n[HUMANLIKE FLOW]: intent-first, direct answer, then optional one-line follow-up. No rambling, no random topic jump.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
@@ -2764,7 +2795,7 @@ const {
         const response = await performChatRequest({
           model: currentModel,
           messages: finalMessages,
-          temperature: 0.35,
+          temperature: 0.28,
           max_tokens: fastMode ? 140 : 200
         });
 
@@ -2789,6 +2820,9 @@ const {
           let finalResult = cleaned.trim();
           finalResult = cleanupGeneratedLine(finalResult, {
             allowExplicit: forceSexualGuard || forceFlirtyMode
+          });
+          finalResult = enforceTropaResponseShape(userMessage, finalResult, {
+            isResearch: researchContext.length > 0 || forceResearchGrounding
           });
           console.log(`[CLEANER] Raw: ${reply.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
 
