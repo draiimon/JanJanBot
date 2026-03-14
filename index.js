@@ -1970,14 +1970,14 @@ const {
           const fullUser = await client.users.fetch(target.id, { force: true });
           const member = await message.guild.members.fetch(target.id).catch(() => null);
 
-          const mainAvatar = fullUser.displayAvatarURL({ size: 1024, dynamic: true });
-          const banner = fullUser.bannerURL({ size: 1024, dynamic: true });
+          const mainAvatar = fullUser.displayAvatarURL({ size: 4096, dynamic: true });
+          const banner = fullUser.bannerURL({ size: 4096, dynamic: true });
           const accentColor = fullUser.hexAccentColor || '#5865F2';
 
           const embed = new EmbedBuilder()
             .setColor(accentColor)
             .setTitle(`👤 ${fullUser.tag}`)
-            .setThumbnail(mainAvatar)
+            .setImage(mainAvatar)
             .addFields(
               { name: '🆔 User ID', value: fullUser.id, inline: true },
               { name: '🤖 Bot?', value: fullUser.bot ? 'Oo' : 'Hindi', inline: true },
@@ -1985,12 +1985,12 @@ const {
             );
 
           if (banner) {
-            embed.setImage(banner);
+            embed.addFields({ name: 'Banner', value: `[Open HD](${banner})`, inline: true });
           }
 
           // Server profile
           if (member) {
-            const serverAvatar = member.displayAvatarURL({ size: 1024, dynamic: true });
+            const serverAvatar = member.displayAvatarURL({ size: 4096, dynamic: true });
             const roles = member.roles.cache
               .filter(r => r.id !== message.guild.id)
               .sort((a, b) => b.position - a.position)
@@ -2019,7 +2019,12 @@ const {
           embed.setFooter({ text: `Requested by ${message.author.tag}`, iconURL: message.author.displayAvatarURL() });
           embed.setTimestamp();
 
-          await message.reply({ embeds: [embed] });
+          const viewRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Avatar HD').setURL(mainAvatar),
+            ...(banner ? [new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Banner HD').setURL(banner)] : [])
+          );
+
+          await message.reply({ embeds: [embed], components: [viewRow] });
           return;
         }
 
@@ -2511,5 +2516,6 @@ const {
   });
 
 })(); // End of async IIFE
+
 
 
