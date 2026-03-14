@@ -1385,7 +1385,14 @@ const {
       'Ako na naman? Sige, carry on mga accla.'
     ];
     const finalLineRaw = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
-    const finalLine = sanitizeOutboundText(lessenCharotWords(finalLineRaw, false));
+    const qualityFallback = fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+    const preLine = sanitizeOutboundText(lessenCharotWords(finalLineRaw, false));
+    const finalLine = await applyChannelResponseQualityGate(message.channel, preLine, {
+      fallback: qualityFallback,
+      onRepeat: 'fallback',
+      allowExplicit: false
+    });
+    if (!finalLine) return true;
     await message.reply(finalLine).catch(() => { });
     return true;
   }
@@ -1474,7 +1481,14 @@ const {
 
             // No contextual output = no extra message (react-only) to avoid random epal chatter.
             if (epal) {
-              await channel.send(sanitizeOutboundText(epal)).catch(() => { });
+              const qualityEpal = await applyChannelResponseQualityGate(channel, epal, {
+                fallback: '',
+                onRepeat: 'drop',
+                allowExplicit: false
+              });
+              if (qualityEpal) {
+                await channel.send(qualityEpal).catch(() => { });
+              }
             }
           }
         } catch {
@@ -1650,6 +1664,75 @@ const {
       return buildCoherentFallback(user);
     }
     return reply;
+  }
+
+  function normalizeReplySimilarityKey(text = '') {
+    return String(text || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function tokenJaccardSimilarity(a = '', b = '') {
+    const ta = new Set(normalizeReplySimilarityKey(a).split(' ').filter((w) => w.length >= 3));
+    const tb = new Set(normalizeReplySimilarityKey(b).split(' ').filter((w) => w.length >= 3));
+    if (ta.size === 0 || tb.size === 0) return 0;
+    let inter = 0;
+    for (const x of ta) if (tb.has(x)) inter++;
+    const union = new Set([...ta, ...tb]).size;
+    return union === 0 ? 0 : inter / union;
+  }
+
+  function isLowQualityTemplateReply(text = '') {
+    const t = normalizeReplySimilarityKey(text);
+    if (!t) return true;
+    const badPatterns = [
+      /ang galing mo sa/,
+      /pagtatawa at pagrereact/,
+      /anong gusto mo malaman/,
+      /parang ikaw rin ang may gusto malaman/,
+      /wala nang traffic/,
+      /traffic beh/,
+      /sarap ka ba talaga/
+    ];
+    if (badPatterns.some((re) => re.test(t))) return true;
+    const words = t.split(' ').filter(Boolean);
+    if (words.length > 24) return true;
+    return false;
+  }
+
+  async function applyChannelResponseQualityGate(channel, candidate, options = {}) {
+    const fallback = String(options.fallback || '').trim();
+    const onRepeat = options.onRepeat === 'drop' ? 'drop' : 'fallback';
+    let text = sanitizeOutboundText(cleanupGeneratedLine(candidate, { allowExplicit: Boolean(options.allowExplicit) }));
+    if (!text) return onRepeat === 'drop' ? '' : fallback;
+
+    if (isLowQualityTemplateReply(text)) {
+      return onRepeat === 'drop' ? '' : fallback;
+    }
+
+    if (!channel?.messages?.fetch || !client?.user?.id) return text;
+    try {
+      const recent = await channel.messages.fetch({ limit: 12 }).catch(() => null);
+      if (!recent) return text;
+      const botLines = [...recent.values()]
+        .filter((m) => m.author?.id === client.user.id && typeof m.content === 'string')
+        .map((m) => m.content)
+        .filter(Boolean)
+        .slice(0, 6);
+
+      const duplicate = botLines.some((line) => {
+        const sim = tokenJaccardSimilarity(line, text);
+        return sim >= 0.72 || normalizeReplySimilarityKey(line) === normalizeReplySimilarityKey(text);
+      });
+      if (duplicate) {
+        return onRepeat === 'drop' ? '' : fallback;
+      }
+    } catch {
+      // keep resilient; fallback to current text
+    }
+    return text;
   }
 
   function sanitizeOutboundText(text = '') {
@@ -3822,6 +3905,14 @@ const {
         const cleanedReply = cleanupGeneratedLine(sanitizedReply, { allowExplicit: sexualGuardMode || flirtyMode });
         const guardedReply = applyRealityGuard(cleanedReply, voiceMembers);
         const normalizedReply = lessenCharotWords(guardedReply, hostileMode);
+        const fallbackReply = researchMode
+          ? 'May kulang o conflict sa sources ngayon, check mo links sa baba.'
+          : buildCoherentFallback(content);
+        const qualityReply = await applyChannelResponseQualityGate(message.channel, normalizedReply, {
+          fallback: fallbackReply,
+          onRepeat: 'fallback',
+          allowExplicit: sexualGuardMode || flirtyMode
+        });
         const sourceLines = tavilyResults
           .slice(0, 3)
           .map((r) => `- [${r.title}](${r.url})${r.publishedAt ? ` (${r.publishedAt.toISOString().slice(0, 10)})` : ''}`);
@@ -3830,8 +3921,8 @@ const {
             ? `\n\nNote: ${researchConfidence.note}`
             : '';
         const finalReply = sourceLines.length > 0
-          ? `${normalizedReply}${uncertaintyLine}\n\nSources:\n${sourceLines.join('\n')}`
-          : normalizedReply;
+          ? `${qualityReply}${uncertaintyLine}\n\nSources:\n${sourceLines.join('\n')}`
+          : qualityReply;
         const mentionTargets = message.mentions?.users
           ? [...message.mentions.users.values()].filter((u) => u.id !== client.user.id)
           : [];
