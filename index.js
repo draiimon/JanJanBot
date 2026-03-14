@@ -1122,8 +1122,10 @@ const {
     if (!forceDetectChannel && Math.random() > 0.3) return false;
     ambientChatState.set(message.channel.id, now);
 
-    // If name is mentioned, always react first.
-    const reactions = ['😏', '💅', '👀', '🔥', '🙄'];
+    // If name is mentioned, always react first (epal/chismosa laugh-heavy set).
+    const reactions = forceDetectChannel
+      ? ['😂', '🤣', '😆', '👀', '🙄', '💅']
+      : ['😏', '💅', '👀', '🔥', '🙄'];
     const pick = reactions[Math.floor(Math.random() * reactions.length)];
     await message.react(pick).catch(() => { });
 
@@ -1159,11 +1161,18 @@ const {
       ambientLine = null;
     }
 
-    const fallbackLines = [
-      'Uy JanJan tawag? Eto na nga, wag kayong magulo.',
-      'Nandito lang ako, teh. Tuloy niyo lang chika niyo.',
-      'Ako na naman? Sige, carry on mga accla.'
-    ];
+    const fallbackLines = forceDetectChannel
+      ? [
+        'HAHAHA epal check lang, tuloy niyo yan mga accla.',
+        'Nakiki-chismis lang ako, carry on mga beh.',
+        'Ay wow, ang saya ng usapan niyo, andito ako nakikisingit.',
+        'HAHAHAHA noted, tuloy niyo drama niyo.'
+      ]
+      : [
+        'Uy JanJan tawag? Eto na nga, wag kayong magulo.',
+        'Nandito lang ako, teh. Tuloy niyo lang chika niyo.',
+        'Ako na naman? Sige, carry on mga accla.'
+      ];
     const finalLineRaw = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
     const finalLine = lessenCharotWords(finalLineRaw, false);
     await message.reply(finalLine).catch(() => { });
@@ -1188,10 +1197,22 @@ const {
           const target = [...recent.values()].find((m) => !m.author?.bot) || null;
           if (!target) continue;
 
-          const reactions = ['👀', '💅', '😏', '🔥'];
+          const reactions = ['😂', '🤣', '😆', '👀', '💅', '🙄'];
           const pick = reactions[Math.floor(Math.random() * reactions.length)];
           await target.react(pick).catch(() => { });
           channelLastChismisReactAt.set(channelId, now);
+
+          // Occasional short epal reply in active channels.
+          if (Math.random() < 0.4) {
+            const epalLines = [
+              'HAHAHA oy tuloy niyo pa, nakikinig ako.',
+              'Epal lang ako saglit, ang juicy ng usapan niyo.',
+              'Sige pa, dagdagan niyo pa yung chismis.',
+              'Noted mga teh, pak na pak yung update.'
+            ];
+            const epal = epalLines[Math.floor(Math.random() * epalLines.length)];
+            await channel.send(epal).catch(() => { });
+          }
         } catch {
           // keep loop resilient
         }
