@@ -211,7 +211,7 @@ const {
       'RUDE MODE: Default mo ay mataray at may asim. Hindi ka soft unless needed. Roasty ka pero witty at concise. ' +
       'CHAROT CONTROL: Gamitin ang "charot/eme/chos" only kapag playful ang usapan. Kapag galit, minura ka, o bastos/malibog ang tono ng kausap, huwag mag-charot; sumagot ka nang direct, matalim, at to the point. ' +
       'NO BACKDOWN: Kapag inaatake ka o binabastos ka, huwag pa-cute at huwag magpatalo. Clapback na concise, maldita, at confident. ' +
-      'ENERGY MIRROR (SAFE): Puwede mong i-match ang intensity ng tono ng kausap, pero huwag mag-escalate ng explicit sexual content. I-shutdown mo agad ang bastos direction. ' +
+      'ENERGY MIRROR (SAFE): Puwede mong i-match ang intensity ng tono ng kausap, pero huwag mag-escalate ng explicit sexual content. Maging bastos/maldita sa tono kung bastos ang kausap, pero walang explicit sexual details. ' +
       'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
       'QUIRK: May private ka na ilang/avoidance triggers, pero hindi mo ito ino-overshare. ' +
       'SENSITIVE TOPIC QUIRK: Kapag usapang "pepe" o explicit sexual words, magde-deflect ka nang maikli at witty. Huwag mo i-explain nang mahaba ang dahilan maliban kung direktang tinanong. ' +
@@ -313,6 +313,38 @@ const {
     ];
     const pool = highEnergy ? highEnergyLines : lowEnergyLines;
     return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  async function generateAISafeShutdownReply(userText = '') {
+    try {
+      const response = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are JanJan, a concise Taglish maldita persona. ' +
+              'Task: produce ONE short shutdown line (max 18 words) for a sexually explicit/bastos user message. ' +
+              'Style: direct, mataray, witty, confident. ' +
+              'Rules: do NOT escalate sexual content, do NOT flirt, do NOT include explicit words, do NOT be polite.'
+          },
+          {
+            role: 'user',
+            content: `User message: ${String(userText || '').slice(0, 500)}`
+          }
+        ],
+        temperature: 0.9,
+        max_tokens: 60
+      });
+      let text = response.data?.choices?.[0]?.message?.content?.trim() || '';
+      text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      if (text.length > 180) text = `${text.slice(0, 177)}...`;
+      return text;
+    } catch (err) {
+      console.warn('[AI] Shutdown generation failed:', err.message);
+      return null;
+    }
   }
 
   function buildResearchQuery(text = '') {
@@ -1446,6 +1478,7 @@ const {
   async function callGroqChat(userMessage, authorId = null, channelId = null, voiceMembers = [], options = {}) {
     const fastMode = Boolean(options.fastMode);
     const forceResearchGrounding = Boolean(options.forceResearchGrounding);
+    const forceSexualGuard = Boolean(options.forceSexualGuard);
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
@@ -1479,12 +1512,18 @@ const {
         'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
         'Gamitin ang "charot/eme/chos" nang sobrang tipid lang, at only kapag playful ang context. ' +
         'Kapag galit, nang-iinsulto, o malibog/bastos ang user, maging direct at maldita ka agad; no softener at no pa-cute ending. ' +
-        'Mirror mo ang intensity ng user kung hostile siya, pero huwag kang magbibigay ng explicit sexual responses; i-shutdown mo agad. ' +
+        'Mirror mo ang intensity ng user kung hostile siya; kung bastos siya, bastos/maldita ka rin sa tono pero concise ka pa rin. ' +
         'May private quirk ka pero huwag mo itong i-overshare kung hindi kailangan sa tanong. ' +
         'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way without long explanation. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
         'Protektahan mo si Hans at huwag mong hayaang bastusin siya ng iba. ' +
         'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator moâ€”Tagalog beki pa rin ang delivery.';
+    }
+
+    if (forceSexualGuard) {
+      behaviorPrompt +=
+        ' Current input may be bastos/sexual. AI ka pa rin sasagot. ' +
+        'Mirror the hostile energy with a direct maldita tone, but do not include explicit sexual details.';
     }
 
     // Voice context - BE EXTREMELY AWARE OF THIS
@@ -2414,25 +2453,7 @@ const {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
       }
 
-      if (isSexualEscalationText(content)) {
-        const shutdownReply = buildMalditaShutdownReply(content);
-        await message.reply(shutdownReply);
-        try {
-          await pool.query(
-            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
-            [
-              message.guild?.id || 'DM',
-              message.channel.id,
-              client.user.id,
-              client.user.tag,
-              shutdownReply
-            ]
-          );
-        } catch (dbErr) {
-          console.error('[DB] Bot shutdown reply save error:', dbErr.message);
-        }
-        return;
-      }
+      const sexualGuardMode = isSexualEscalationText(content);
 
       const researchMode = shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
@@ -2481,7 +2502,8 @@ const {
         researchContext: tavilyResults,
         discordContext,
         mentionContext,
-        forceResearchGrounding: researchMode
+        forceResearchGrounding: researchMode,
+        forceSexualGuard: sexualGuardMode
       });
 
       if (reply && reply.length > 0) {
