@@ -59,6 +59,7 @@ const {
   const audioPlayers = new Map();
   const aiChannelQueues = new Map();
   const aiChannelQueueDepths = new Map();
+  const ambientChatState = new Map(); // channelId -> last ambient timestamp
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -696,6 +697,66 @@ const {
       console.error('[VOICE MOVE] natural move failed:', err.message);
       await message.reply('Hindi ako nakalipat, may sabit. Try mo ulit, teh.');
     }
+    return true;
+  }
+
+  async function maybeAmbientInteract(message, rawText) {
+    if (!message.guild || !rawText) return false;
+    const lower = rawText.toLowerCase();
+    const janjanTriggered = /\bjanjan\b|\bjanjanbot\b/.test(lower);
+    if (!janjanTriggered) return false;
+
+    const now = Date.now();
+    const cooldownMs = 70 * 1000;
+    const lastTs = ambientChatState.get(message.channel.id) || 0;
+    if ((now - lastTs) < cooldownMs) return false;
+
+    // Keep this occasional para hindi spammy.
+    if (Math.random() > 0.3) return false;
+    ambientChatState.set(message.channel.id, now);
+
+    const reactOnly = Math.random() < 0.6;
+    if (reactOnly) {
+      const reactions = ['😏', '💅', '👀', '🔥', '🙄'];
+      const pick = reactions[Math.floor(Math.random() * reactions.length)];
+      await message.react(pick).catch(() => { });
+      return true;
+    }
+
+    let ambientLine = null;
+    try {
+      const aiRes = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are JanJan, rude Taglish beki. Output one short ambient interjection, max 12 words. ' +
+              'Playful/maldita, no explanation.'
+          },
+          {
+            role: 'user',
+            content: `Conversation trigger: ${rawText.slice(0, 200)}`
+          }
+        ],
+        temperature: 1.0,
+        max_tokens: 40
+      });
+      ambientLine = aiRes.data?.choices?.[0]?.message?.content?.trim() || null;
+      if (ambientLine) {
+        ambientLine = ambientLine.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+      }
+    } catch {
+      ambientLine = null;
+    }
+
+    const fallbackLines = [
+      'Uy JanJan tawag? Eto na nga, wag kayong magulo.',
+      'Nandito lang ako, teh. Tuloy niyo lang chika niyo.',
+      'Ako na naman? Sige, carry on mga accla.'
+    ];
+    const finalLine = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+    await message.reply(finalLine).catch(() => { });
     return true;
   }
 
@@ -2550,6 +2611,10 @@ const {
       }
 
       if (!isMention && !isReplyToBot) {
+        // Ambient mode: occasional reactions/interjections when JanJan is name-dropped.
+        const ambientHandled = await maybeAmbientInteract(message, rawContent);
+        if (ambientHandled) return;
+
         // Auto TTS check
         if (message.guild && autoTtsChannels.has(message.guild.id)) {
           const channels = autoTtsChannels.get(message.guild.id);
