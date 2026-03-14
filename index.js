@@ -1303,7 +1303,7 @@ const {
       'Ako na naman? Sige, carry on mga accla.'
     ];
     const finalLineRaw = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
-    const finalLine = lessenCharotWords(finalLineRaw, false);
+    const finalLine = sanitizeOutboundText(lessenCharotWords(finalLineRaw, false));
     await message.reply(finalLine).catch(() => { });
     return true;
   }
@@ -1392,7 +1392,7 @@ const {
 
             // No contextual output = no extra message (react-only) to avoid random epal chatter.
             if (epal) {
-              await channel.send(epal).catch(() => { });
+              await channel.send(sanitizeOutboundText(epal)).catch(() => { });
             }
           }
         } catch {
@@ -1540,6 +1540,21 @@ const {
       return 'Linawin mo pa nang konti para tama sagot ko, teh.';
     }
     return 'Gets ko tanong mo, pero kulang context para sakto. Bigyan mo ko ng 1-2 detalye pa, teh.';
+  }
+
+  function sanitizeOutboundText(text = '') {
+    let out = String(text || '').trim();
+    if (!out) return out;
+
+    out = out
+      .replace(/\(?\s*note:\s*full system exhaustion[^)]*\)?/gi, '')
+      .replace(/\bfull system exhaustion\b/gi, '')
+      .replace(/\bout of tokens\b/gi, '')
+      .replace(/\b\d{17,20}\b/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    return out;
   }
 
   function escapeRegex(text = '') {
@@ -2788,7 +2803,7 @@ const {
             continue;
           }
 
-          return finalResult;
+          return sanitizeOutboundText(finalResult);
         }
       } catch (err) {
         const isRateLimit = err.response && (err.response.status === 429 || err.response.data?.error?.code === 'rate_limit_exceeded');
@@ -2803,7 +2818,7 @@ const {
     }
 
     // ABSOLUTE FALLBACK - If all models fail
-    return buildCoherentFallback(userMessage);
+    return sanitizeOutboundText(buildCoherentFallback(userMessage));
   }
 
   /**
