@@ -39,6 +39,9 @@ const {
     GatewayIntentBits,
     Partials,
     EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
     PermissionsBitField,
     ActivityType
   } = require('discord.js');
@@ -2331,9 +2334,52 @@ const {
   // Same vibe as gnslgbot2's on_voice_state_update
   // =====================================================================
 
+  const vcComplimentCache = new Map(); // userId -> {word, ts}
+
+  async function inferComplimentWord(userId, displayName) {
+    const cached = vcComplimentCache.get(userId);
+    const TEN_HOURS = 10 * 60 * 60 * 1000;
+    if (cached && (Date.now() - cached.ts) < TEN_HOURS) return cached.word;
+
+    let userFacts = '';
+    try {
+      const userRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
+      userFacts = userRes.rows[0]?.facts || '';
+    } catch { }
+
+    let word = 'astig';
+    try {
+      const res = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content: 'Classify likely compliment style from nickname/context. Output only one token: POGI or GANDA or NEUTRAL.'
+          },
+          {
+            role: 'user',
+            content: `Nickname: ${displayName}\nKnown facts: ${userFacts || 'none'}`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 5
+      });
+
+      const raw = (res.data?.choices?.[0]?.message?.content || '').toUpperCase();
+      if (raw.includes('POGI')) word = 'pogi';
+      else if (raw.includes('GANDA')) word = 'ganda';
+      else word = 'astig';
+    } catch {
+      word = 'astig';
+    }
+
+    vcComplimentCache.set(userId, { word, ts: Date.now() });
+    return word;
+  }
+
   // Quick Groq call for AI-generated VC announcements (fast, short, adaptive via DB facts)
   const lastVCAnnouncementByGuild = new Map(); // key: guildId:type -> text
-  async function generateVCAnnouncement(type, displayName, userId = null, guildId = 'global') {
+  async function generateVCAnnouncement(type, displayName, userId = null, guildId = 'global', complimentWord = 'astig') {
     const groqKey = GROQ_KEYS.find(k => k);
     if (!groqKey) return null;
     try {
@@ -2348,6 +2394,7 @@ const {
 
       const prompt = type === 'join'
         ? `Gumawa ng ISANG maikling rude beki VC JOIN line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
+          `Include compliment flavor like "ang ${complimentWord} naman neto bes" naturally. ` +
           `Style: mataray, witty, kanal humor. Person context: ${userFacts || 'none'}. ` +
           `Huwag ulitin itong previous style/line: "${previous}". Walang explanation.`
         : `Gumawa ng ISANG maikling rude BACKSTAB VC LEAVE line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
@@ -2417,17 +2464,18 @@ const {
       const displayName = member.displayName || member.user.username;
       const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
       const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
+      const complimentWord = await inferComplimentWord(member.id, displayName);
 
       if (joinedBotVC) {
         // === USER JOINED ===
         let msg;
         const fallbackJoin = [
-          `Ayan na si ${displayName}, late ka na naman teh.`,
+          `Ayan na si ${displayName}, ang ${complimentWord} naman neto bes.`,
           `${displayName} joined. Gulo mode ulit, mga accla.`,
           `Uy ${displayName}, sa wakas dumating ka rin.`
         ];
 
-        const aiJoin = await generateVCAnnouncement('join', displayName, member.id, guildId);
+        const aiJoin = await generateVCAnnouncement('join', displayName, member.id, guildId, complimentWord);
         msg = aiJoin || fallbackJoin[Math.floor(Math.random() * fallbackJoin.length)];
 
         console.log(`[VOICE STATE] ${displayName} joined -> "${msg}"`);
@@ -2443,7 +2491,7 @@ const {
           `Ayun umalis si ${displayName}, next issue please.`
         ];
 
-        const aiLeave = await generateVCAnnouncement('leave', displayName, member.id, guildId);
+        const aiLeave = await generateVCAnnouncement('leave', displayName, member.id, guildId, complimentWord);
         msg = aiLeave || fallbackLeave[Math.floor(Math.random() * fallbackLeave.length)];
 
         console.log(`[VOICE STATE] ${displayName} left -> "${msg}"`);
