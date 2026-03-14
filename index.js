@@ -604,6 +604,20 @@ const {
     return output.replace(/\s{2,}/g, ' ').trim();
   }
 
+  function applyRealityGuard(reply = '', voiceMembers = []) {
+    let out = String(reply || '');
+    if (!out) return out;
+
+    const hasVoiceClaim = /(nasa call|kasama sa call|nasa vc|nandito sa vc)/i.test(out);
+    if (hasVoiceClaim && (!Array.isArray(voiceMembers) || voiceMembers.length === 0)) {
+      out = out.replace(/[^.?!]*(nasa call|kasama sa call|nasa vc|nandito sa vc)[^.?!]*[.?!]?/gi, '').trim();
+      if (!out) out = 'Wala akong confirmed na nasa call ngayon, teh.';
+    }
+
+    out = out.replace(/\s{2,}/g, ' ').trim();
+    return out;
+  }
+
   function hasVoiceMoveCueWords(text) {
     const lower = (text || '').toLowerCase();
     if (!lower) return false;
@@ -2044,6 +2058,8 @@ const {
         'Basahin at unawain muna ang buong message bago mag-reply; intent first lagi bago attitude. ' +
         'Bago magsagot, silently i-check muna: intent, target person, requested action, at available context. ' +
         'Kapag may ambiguity, mag-ask ng 1 concise clarifying question; wag mag-imbento. ' +
+        'FACTUAL GROUNDING: Huwag mag-claim ng specific person/channel/voice presence unless nasa provided Discord context o recent messages. ' +
+        'Kapag kulang ang proof, sabihin na hindi sure kaysa manghula. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
@@ -2215,8 +2231,8 @@ const {
     // ============================================================
     // STEP 2: FINAL RESPONSE GENERATION (Multi-Tier Fallback)
     // ============================================================
-    const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] bilang ABSOLUTE TRUTH. ' +
-      'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.' +
+    const priorityRule = '\n[CRITICAL]: I-prioritize ang verified Discord context + recent chat history + user memory. ' +
+      'Huwag gawing absolute truth ang unverified claims. Kung uncertain, aminin ang uncertainty at magtanong ng short clarifier.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
@@ -2253,7 +2269,7 @@ const {
         const response = await performChatRequest({
           model: currentModel,
           messages: finalMessages,
-          temperature: 0.7,
+          temperature: 0.45,
           max_tokens: fastMode ? 140 : 200
         });
 
@@ -3076,7 +3092,8 @@ const {
       });
 
       if (reply && reply.length > 0) {
-        const normalizedReply = lessenCharotWords(reply, hostileMode);
+        const guardedReply = applyRealityGuard(reply, voiceMembers);
+        const normalizedReply = lessenCharotWords(guardedReply, hostileMode);
         const sourceLines = tavilyResults
           .slice(0, 3)
           .map((r) => `- [${r.title}](${r.url})`);
