@@ -60,7 +60,10 @@ const {
   const aiChannelQueues = new Map();
   const aiChannelQueueDepths = new Map();
   const ambientChatState = new Map(); // channelId -> last ambient timestamp
-  const ALWAYS_TRIGGER_CHANNEL_ID = '1426746103797256200';
+  const ALWAYS_TRIGGER_CHANNEL_IDS = new Set([
+    '1426746103797256200',
+    '1427128206431096913'
+  ]);
   const HOME_VC_CHANNEL_ID = '1427128206431096913';
   const voiceChannelAliasMap = new Map([
     ['monkeybars', '1427128206431096913'],
@@ -1082,16 +1085,16 @@ const {
     if (!janjanTriggered) return false;
 
     const now = Date.now();
-    const forceDetectChannel = message.channel.id === ALWAYS_TRIGGER_CHANNEL_ID;
-    const cooldownMs = forceDetectChannel ? 5 * 1000 : 70 * 1000;
+    const forceDetectChannel = ALWAYS_TRIGGER_CHANNEL_IDS.has(message.channel.id);
+    const cooldownMs = forceDetectChannel ? 4 * 1000 : 70 * 1000;
     const lastTs = ambientChatState.get(message.channel.id) || 0;
     if ((now - lastTs) < cooldownMs) return false;
 
-    // Keep this occasional para hindi spammy, except in forced channel.
+    // Keep this occasional para hindi spammy, except in forced channels.
     if (!forceDetectChannel && Math.random() > 0.3) return false;
     ambientChatState.set(message.channel.id, now);
 
-    const reactOnly = Math.random() < 0.6;
+    const reactOnly = forceDetectChannel ? false : Math.random() < 0.6;
     if (reactOnly) {
       const reactions = ['😏', '💅', '👀', '🔥', '🙄'];
       const pick = reactions[Math.floor(Math.random() * reactions.length)];
