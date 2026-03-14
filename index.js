@@ -1500,6 +1500,48 @@ const {
     return out;
   }
 
+  function extractCoreTokensSimple(text = '', max = 8) {
+    const stop = new Set([
+      'ang', 'mga', 'yung', 'pero', 'kasi', 'lang', 'naman', 'saka', 'dito', 'diyan', 'kayo',
+      'ako', 'ikaw', 'siya', 'kami', 'tayo', 'nila', 'ito', 'iyan', 'yan', 'to', 'na', 'ng',
+      'sa', 'at', 'or', 'the', 'a', 'an', 'is', 'are', 'of', 'for', 'with', 'from', 'that', 'this',
+      'janjan', 'jan', 'josh'
+    ]);
+    const tokens = String(text || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !stop.has(w));
+    const freq = new Map();
+    for (const t of tokens) freq.set(t, (freq.get(t) || 0) + 1);
+    return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([w]) => w);
+  }
+
+  function isReplyGroundedToUserInput(userText = '', replyText = '') {
+    const u = String(userText || '').trim();
+    const r = String(replyText || '').trim();
+    if (!u || !r) return false;
+    if (u.length <= 10) return true;
+
+    const keys = extractCoreTokensSimple(u, 6);
+    if (keys.length === 0) return true;
+
+    const rl = r.toLowerCase();
+    const hitCount = keys.reduce((n, k) => n + (rl.includes(k) ? 1 : 0), 0);
+    return hitCount >= 1;
+  }
+
+  function buildCoherentFallback(userText = '') {
+    const input = String(userText || '').trim();
+    if (/\b(kamusta|kumusta|hi|hello|yo)\b/i.test(input)) {
+      return 'Eto lang, buhay pa. Ikaw, anong ganap?';
+    }
+    if (input.length < 8) {
+      return 'Linawin mo pa nang konti para tama sagot ko, teh.';
+    }
+    return 'Gets ko tanong mo, pero kulang context para sakto. Bigyan mo ko ng 1-2 detalye pa, teh.';
+  }
+
   function escapeRegex(text = '') {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -2685,6 +2727,7 @@ const {
     // ============================================================
     const priorityRule = '\n[CRITICAL]: I-prioritize ang verified Discord context + recent chat history + user memory. ' +
       'Huwag gawing absolute truth ang unverified claims. Kung uncertain, aminin ang uncertainty at magtanong ng short clarifier.' +
+      '\n[OUTPUT STYLE]: 1-2 short sentences lang unless user explicitly asked for long format. Dapat coherent at direct sa latest message.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
@@ -2692,26 +2735,11 @@ const {
         ? '\n[STRICT SOURCE RULE]: This is a latest/news/current query. Ground answer ONLY on search context.'
         : '');
 
+    const includePlan = Boolean(sanitizedThoughts && sanitizedThoughts.length > 0 && sanitizedThoughts.length <= 180 && !fastMode);
     const finalMessages = [
-      { role: 'system', content: systemPrompt + (sanitizedThoughts ? `\n\n[PLAN]: ${sanitizedThoughts}` : '') + priorityRule },
+      { role: 'system', content: systemPrompt + (includePlan ? `\n\n[PLAN]: ${sanitizedThoughts}` : '') + priorityRule },
       ...historyMessages,
       { role: 'user', content: userMessage }
-    ];
-
-    // Personalized fallback data
-    let identityName = authorId;
-    if (userFacts && userFacts.includes('|')) {
-      const factParts = userFacts.split('|');
-      identityName = factParts[0].replace('[MGA ALAM MO TUNGKOL SA KAUSAP MO]:', '').trim().split(' ')[0] || authorId;
-    }
-
-    const fallbackPhrases = [
-      `Ay naku ${identityName}, wag mo muna ako kausapin, haggard na ang utak ko sa inyo. Antibiotic ka muna!`,
-      `Wait lang ${identityName}, nagpapahinga ang beauty ko. Masyado kayong madaldal, naubusan ako ng energy!`,
-      `Luz Valdez muna ang lola mo. Try mo ulit mamaya kapag hindi na toxic ang system, ${identityName}!`,
-      `Hoy ${identityName}, stop muna. Masyado kayong papansin, na-drain ang utak ko. Shunga!`,
-      `Ay wait, nagpapa-lip filler lang ako. Balikan kita mamaya, ${identityName}!`,
-      `Busy ako ${identityName}, naglalaba ako ng panty. Mamaya na yang chismis mo!`
     ];
 
     // Loop through Tiered Models
@@ -2721,7 +2749,7 @@ const {
         const response = await performChatRequest({
           model: currentModel,
           messages: finalMessages,
-          temperature: 0.45,
+          temperature: 0.35,
           max_tokens: fastMode ? 140 : 200
         });
 
@@ -2743,12 +2771,20 @@ const {
             .replace(/^Okay, (let me|let's) (think|see|analyze)[\s\S]*?(\n\n|\.\s+|$)/i, '')
             .replace(/^Thinking Process:[\s\S]*?(\n\n|$)/gi, '');
 
-          const finalResult = cleaned.trim();
+          let finalResult = cleaned.trim();
+          finalResult = cleanupGeneratedLine(finalResult, {
+            allowExplicit: forceSexualGuard || forceFlirtyMode
+          });
           console.log(`[CLEANER] Raw: ${reply.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
 
           // If after cleaning we have nothing, this model only gave us thoughts. TRY NEXT MODEL.
           if (!finalResult || finalResult.length < 2) {
             console.warn(`[GROQ] Model ${currentModel} purely internal. Skipping...`);
+            continue;
+          }
+
+          if (!isReplyGroundedToUserInput(userMessage, finalResult) && !forceResearchGrounding) {
+            console.warn(`[GROQ] Model ${currentModel} output looks off-topic. Trying next model...`);
             continue;
           }
 
@@ -2767,8 +2803,7 @@ const {
     }
 
     // ABSOLUTE FALLBACK - If all models fail
-    const randomJanJan = fallbackPhrases[Math.floor(Math.random() * fallbackPhrases.length)];
-    return `${randomJanJan} (Note: Full system exhaustion ghorl, out of tokens!)`;
+    return buildCoherentFallback(userMessage);
   }
 
   /**
