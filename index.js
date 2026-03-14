@@ -480,6 +480,8 @@ const {
       lower.includes('lipat ka') ||
       lower.includes('bumaba ka') ||
       lower.includes('umakyat ka') ||
+      lower.includes('ibaba mo') ||
+      lower.includes('iakyat mo') ||
       lower.includes('sumunod ka') ||
       lower.includes('sunod ka') ||
       lower.includes('move ka') ||
@@ -558,6 +560,8 @@ const {
     return (
       lower.includes('lipat') ||
       lower.includes('lumipat') ||
+      lower.includes('iakyat') ||
+      lower.includes('ibaba') ||
       lower.includes('move') ||
       lower.includes('punta') ||
       lower.includes('baba') ||
@@ -607,6 +611,53 @@ const {
     } catch {
       return { move: false, target: 'NONE', bring: false, channelName: '' };
     }
+  }
+
+  function extractRequestedMemberNames(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return [];
+    const names = new Set();
+
+    // Supports patterns like "si alabama", "sina alabama at jules"
+    const matchSingle = lower.match(/\bsi\s+([a-z0-9._-]{2,32})/g) || [];
+    for (const m of matchSingle) {
+      const n = m.replace(/\bsi\s+/i, '').trim();
+      if (n) names.add(n);
+    }
+
+    const matchPlural = lower.match(/\bsina\s+([a-z0-9._,\s-]{2,80})/g) || [];
+    for (const m of matchPlural) {
+      const raw = m.replace(/\bsina\s+/i, '').trim();
+      raw
+        .split(/,| at | and /i)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((n) => names.add(n));
+    }
+
+    return [...names].filter((n) => n.length >= 2);
+  }
+
+  function resolveMembersByRequestedNames(guild, requestedNames = []) {
+    if (!guild || requestedNames.length === 0) return [];
+    const resolved = [];
+    const seen = new Set();
+
+    for (const requested of requestedNames) {
+      const needle = requested.toLowerCase();
+      const member = guild.members.cache.find((m) => {
+        const nick = (m.displayName || '').toLowerCase();
+        const uname = (m.user?.username || '').toLowerCase();
+        const gname = (m.user?.globalName || '').toLowerCase();
+        return nick === needle || uname === needle || gname === needle ||
+          nick.includes(needle) || uname.includes(needle) || gname.includes(needle);
+      });
+      if (member && !seen.has(member.id)) {
+        seen.add(member.id);
+        resolved.push(member);
+      }
+    }
+    return resolved;
   }
 
   function listMoveCandidateVoiceChannels(guild) {
@@ -729,12 +780,33 @@ const {
 
       let movedNames = [];
       const shouldBring = shouldBringMentionedMembers(rawText) || aiIntent.bring;
-      if (shouldBring && message.mentions?.users?.size > 0) {
-        const mentionedIds = [...message.mentions.users.keys()].filter(
-          (id) => id !== client.user.id
-        );
-        for (const id of mentionedIds) {
-          const memberToMove = await message.guild.members.fetch(id).catch(() => null);
+      const requestedNames = extractRequestedMemberNames(rawText);
+      if (shouldBring || requestedNames.length > 0) {
+        try { await message.guild.members.fetch(); } catch { }
+
+        const membersToMove = [];
+        const seenMemberIds = new Set();
+
+        if (message.mentions?.users?.size > 0) {
+          const mentionedIds = [...message.mentions.users.keys()].filter((id) => id !== client.user.id);
+          for (const id of mentionedIds) {
+            const memberToMove = await message.guild.members.fetch(id).catch(() => null);
+            if (memberToMove && !seenMemberIds.has(memberToMove.id)) {
+              seenMemberIds.add(memberToMove.id);
+              membersToMove.push(memberToMove);
+            }
+          }
+        }
+
+        const namedMembers = resolveMembersByRequestedNames(message.guild, requestedNames);
+        for (const member of namedMembers) {
+          if (!seenMemberIds.has(member.id)) {
+            seenMemberIds.add(member.id);
+            membersToMove.push(member);
+          }
+        }
+
+        for (const memberToMove of membersToMove) {
           if (!memberToMove?.voice?.channel) continue;
           try {
             await memberToMove.voice.setChannel(target, 'Natural chat command: bring member to VC');
