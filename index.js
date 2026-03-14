@@ -1136,6 +1136,12 @@ const {
     let ambientLine = null;
     try {
       const recent = await message.channel.messages.fetch({ limit: 10 }).catch(() => null);
+      const speakerName =
+        message.member?.displayName ||
+        message.author?.globalName ||
+        message.author?.username ||
+        message.author?.tag ||
+        'user';
       const convoContext = recent
         ? [...recent.values()]
             .filter((m) => !m.author?.bot)
@@ -1143,6 +1149,14 @@ const {
             .map((m) => `${m.member?.displayName || m.author?.globalName || m.author?.username || 'unknown'}: ${(m.content || '').replace(/\s+/g, ' ').slice(0, 120)}`)
             .join(' || ')
         : rawText;
+      const participants = recent
+        ? [...new Set(
+            [...recent.values()]
+              .filter((m) => !m.author?.bot)
+              .map((m) => m.member?.displayName || m.author?.globalName || m.author?.username || '')
+              .filter(Boolean)
+          )]
+        : [];
       const anchorKeywords = extractContextKeywords(convoContext, 6).join(', ') || 'none';
       const aiRes = await performChatRequest({
         model: 'llama-3.1-8b-instant',
@@ -1151,14 +1165,16 @@ const {
             role: 'system',
             content:
               'You are JanJan, rude Taglish beki. Output one short ambient interjection, max 12 words. ' +
-              'Playful/maldita, no explanation. Stay on-topic with current convo.'
+              'Playful/maldita, no explanation. Stay on-topic with current convo. ' +
+              `If naming someone, ONLY name current speaker: "${speakerName}".`
           },
           {
             role: 'user',
             content:
               `Conversation trigger: ${rawText.slice(0, 200)}\n` +
               `Recent convo context: ${convoContext.slice(0, 700)}\n` +
-              `Topic keywords: ${anchorKeywords}`
+              `Topic keywords: ${anchorKeywords}\n` +
+              `Current speaker: ${speakerName}`
           }
         ],
         temperature: 0.55,
@@ -1168,6 +1184,7 @@ const {
       if (ambientLine) {
         ambientLine = ambientLine.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
         if (!isReplyLooseRelevant(ambientLine, convoContext)) ambientLine = null;
+        if (ambientLine && hasDisallowedParticipantName(ambientLine, participants, speakerName)) ambientLine = null;
       }
     } catch {
       ambientLine = null;
@@ -1217,8 +1234,19 @@ const {
 
           // Occasional short epal reply in active channels.
           if (Math.random() < 0.4) {
-            const recentHuman = [...recent.values()]
-              .filter((m) => !m.author?.bot)
+            const humanRecent = [...recent.values()]
+              .filter((m) => !m.author?.bot);
+            const latestSpeaker =
+              humanRecent[0]?.member?.displayName ||
+              humanRecent[0]?.author?.globalName ||
+              humanRecent[0]?.author?.username ||
+              'user';
+            const participants = [...new Set(
+              humanRecent
+                .map((m) => m.member?.displayName || m.author?.globalName || m.author?.username || '')
+                .filter(Boolean)
+            )];
+            const recentHuman = humanRecent
               .slice(0, 6)
               .map((m) => `${m.member?.displayName || m.author?.globalName || m.author?.username || 'unknown'}: ${(m.content || '').replace(/\s+/g, ' ').slice(0, 140)}`)
               .join(' || ');
@@ -1233,13 +1261,15 @@ const {
                     role: 'system',
                     content:
                       'You are JanJan, rude Taglish beki. Create one short chismis interjection based on recent conversation context. ' +
-                      'Max 12 words. Epal/funny/mataray tone. No explanation. Stay on-topic.'
+                      'Max 12 words. Epal/funny/mataray tone. No explanation. Stay on-topic. ' +
+                      `If naming someone, ONLY name latest speaker: "${latestSpeaker}".`
                   },
                   {
                     role: 'user',
                     content:
                       `Recent convo: ${recentHuman || 'none'}\n` +
-                      `Topic keywords: ${anchorKeywords}`
+                      `Topic keywords: ${anchorKeywords}\n` +
+                      `Latest speaker: ${latestSpeaker}`
                   }
                 ],
                 temperature: 0.55,
@@ -1249,6 +1279,7 @@ const {
               if (epal) {
                 epal = epal.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
                 if (!isReplyLooseRelevant(epal, recentHuman)) epal = null;
+                if (epal && hasDisallowedParticipantName(epal, participants, [latestSpeaker])) epal = null;
               }
             } catch {
               epal = null;
@@ -1333,6 +1364,62 @@ const {
     if (keywords.length === 0) return true;
     const lower = String(reply || '').toLowerCase();
     return keywords.some((k) => lower.includes(k));
+  }
+
+  function escapeRegex(text = '') {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function hasDisallowedParticipantName(reply = '', participants = [], allowed = '') {
+    const line = String(reply || '');
+    if (!line || participants.length === 0) return false;
+    const allowedSet = new Set(
+      (Array.isArray(allowed) ? allowed : [allowed])
+        .map((n) => String(n || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    for (const name of participants) {
+      const clean = String(name || '').trim();
+      if (!clean) continue;
+      if (allowedSet.size > 0 && allowedSet.has(clean.toLowerCase())) continue;
+      const re = new RegExp(`\\b${escapeRegex(clean)}\\b`, 'i');
+      if (re.test(line)) return true;
+    }
+    return false;
+  }
+
+  function stripDisallowedParticipantNames(reply = '', participants = [], allowed = '', replacement = 'teh') {
+    let out = String(reply || '');
+    if (!out || participants.length === 0) return out;
+    const allowedSet = new Set(
+      (Array.isArray(allowed) ? allowed : [allowed])
+        .map((n) => String(n || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+    for (const name of participants) {
+      const clean = String(name || '').trim();
+      if (!clean) continue;
+      if (allowedSet.size > 0 && allowedSet.has(clean.toLowerCase())) continue;
+      const re = new RegExp(`\\b${escapeRegex(clean)}\\b`, 'gi');
+      out = out.replace(re, replacement);
+    }
+    return out.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  async function getRecentParticipants(channel, limit = 20) {
+    try {
+      const recent = await channel.messages.fetch({ limit }).catch(() => null);
+      if (!recent) return [];
+      return [...new Set(
+        [...recent.values()]
+          .filter((m) => !m.author?.bot)
+          .map((m) => m.member?.displayName || m.author?.globalName || m.author?.username || '')
+          .filter(Boolean)
+      )];
+    } catch {
+      return [];
+    }
   }
 
   function getOrCreatePlayer(guildId) {
@@ -3323,7 +3410,25 @@ const {
       });
 
       if (reply && reply.length > 0) {
-        const guardedReply = applyRealityGuard(reply, voiceMembers);
+        const participants = await getRecentParticipants(message.channel, 20);
+        const currentSpeakerName =
+          message.member?.displayName ||
+          message.author?.globalName ||
+          message.author?.username ||
+          message.author?.tag ||
+          'user';
+        const explicitlyNamed = participants.filter((n) => {
+          const re = new RegExp(`\\b${escapeRegex(n)}\\b`, 'i');
+          return re.test(content);
+        });
+        const allowedNames = [currentSpeakerName, ...explicitlyNamed];
+
+        let sanitizedReply = reply;
+        if (hasDisallowedParticipantName(sanitizedReply, participants, allowedNames)) {
+          sanitizedReply = stripDisallowedParticipantNames(sanitizedReply, participants, allowedNames, 'teh');
+        }
+
+        const guardedReply = applyRealityGuard(sanitizedReply, voiceMembers);
         const normalizedReply = lessenCharotWords(guardedReply, hostileMode);
         const sourceLines = tavilyResults
           .slice(0, 3)
