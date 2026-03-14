@@ -60,6 +60,8 @@ const {
   const aiChannelQueues = new Map();
   const aiChannelQueueDepths = new Map();
   const ambientChatState = new Map(); // channelId -> last ambient timestamp
+  const channelLastHumanMessageAt = new Map(); // channelId -> timestamp
+  const channelLastChismisReactAt = new Map(); // channelId -> timestamp
   const ALWAYS_TRIGGER_CHANNEL_IDS = new Set([
     '1426746103797256200',
     '1427128206431096913'
@@ -73,6 +75,8 @@ const {
     ['monkeybars', '1427128206431096913'],
     ['monekybars', '1427128206431096913']
   ]);
+  const CHISMIS_REACT_INTERVAL_MS = 60 * 1000;
+  const CHISMIS_ACTIVE_WINDOW_MS = 90 * 1000;
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -1118,11 +1122,13 @@ const {
     if (!forceDetectChannel && Math.random() > 0.3) return false;
     ambientChatState.set(message.channel.id, now);
 
-    const reactOnly = forceDetectChannel ? false : Math.random() < 0.6;
+    // If name is mentioned, always react first.
+    const reactions = ['😏', '💅', '👀', '🔥', '🙄'];
+    const pick = reactions[Math.floor(Math.random() * reactions.length)];
+    await message.react(pick).catch(() => { });
+
+    const reactOnly = forceDetectChannel ? false : Math.random() < 0.7;
     if (reactOnly) {
-      const reactions = ['😏', '💅', '👀', '🔥', '🙄'];
-      const pick = reactions[Math.floor(Math.random() * reactions.length)];
-      await message.react(pick).catch(() => { });
       return true;
     }
 
@@ -1162,6 +1168,35 @@ const {
     const finalLine = lessenCharotWords(finalLineRaw, false);
     await message.reply(finalLine).catch(() => { });
     return true;
+  }
+
+  function startChismisReactLoop() {
+    setInterval(async () => {
+      const now = Date.now();
+      for (const channelId of ALWAYS_TRIGGER_CHANNEL_IDS) {
+        const lastHuman = channelLastHumanMessageAt.get(channelId) || 0;
+        if ((now - lastHuman) > CHISMIS_ACTIVE_WINDOW_MS) continue; // no chat, no chismis
+
+        const lastReact = channelLastChismisReactAt.get(channelId) || 0;
+        if ((now - lastReact) < CHISMIS_REACT_INTERVAL_MS) continue;
+
+        try {
+          const channel = await client.channels.fetch(channelId).catch(() => null);
+          if (!channel || !channel.isTextBased?.()) continue;
+          const recent = await channel.messages.fetch({ limit: 8 }).catch(() => null);
+          if (!recent) continue;
+          const target = [...recent.values()].find((m) => !m.author?.bot) || null;
+          if (!target) continue;
+
+          const reactions = ['👀', '💅', '😏', '🔥'];
+          const pick = reactions[Math.floor(Math.random() * reactions.length)];
+          await target.react(pick).catch(() => { });
+          channelLastChismisReactAt.set(channelId, now);
+        } catch {
+          // keep loop resilient
+        }
+      }
+    }, 15 * 1000).unref?.();
   }
 
   function getOrCreatePlayer(guildId) {
@@ -1899,6 +1934,7 @@ const {
     runtimeState.discord.lastLoginError = null;
     await setBotCustomStatus('lagi akong nandito para sa inyo');
     startScheduledGreetings();
+    startChismisReactLoop();
 
     // =====================================================================
     // 24/7 AUTO-JOIN ON STARTUP â€” load saved voice state from DB
@@ -2458,6 +2494,7 @@ const {
   client.on('messageCreate', async (message) => {
     try {
       if (message.author.bot) return;
+      channelLastHumanMessageAt.set(message.channel.id, Date.now());
 
       // Save message to DB regardless of AI trigger
       try {
