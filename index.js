@@ -1173,18 +1173,14 @@ const {
       ambientLine = null;
     }
 
-    const fallbackLines = forceDetectChannel
-      ? [
-        'HAHAHA epal check lang, tuloy niyo yan mga accla.',
-        'Nakiki-chismis lang ako, carry on mga beh.',
-        'Ay wow, ang saya ng usapan niyo, andito ako nakikisingit.',
-        'HAHAHAHA noted, tuloy niyo drama niyo.'
-      ]
-      : [
-        'Uy JanJan tawag? Eto na nga, wag kayong magulo.',
-        'Nandito lang ako, teh. Tuloy niyo lang chika niyo.',
-        'Ako na naman? Sige, carry on mga accla.'
-      ];
+    // In forced channels, avoid random fallback lines if no contextual AI output.
+    if (!ambientLine && forceDetectChannel) return true;
+
+    const fallbackLines = [
+      'Uy JanJan tawag? Eto na nga, wag kayong magulo.',
+      'Nandito lang ako, teh. Tuloy niyo lang chika niyo.',
+      'Ako na naman? Sige, carry on mga accla.'
+    ];
     const finalLineRaw = ambientLine || fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
     const finalLine = lessenCharotWords(finalLineRaw, false);
     await message.reply(finalLine).catch(() => { });
@@ -1258,17 +1254,10 @@ const {
               epal = null;
             }
 
-            if (!epal) {
-              const epalLines = [
-                'HAHAHA oy tuloy niyo pa, nakikinig ako.',
-                'Epal lang ako saglit, ang juicy ng usapan niyo.',
-                'Sige pa, dagdagan niyo pa yung chismis.',
-                'Noted mga teh, pak na pak yung update.'
-              ];
-              epal = epalLines[Math.floor(Math.random() * epalLines.length)];
+            // No contextual output = no extra message (react-only) to avoid random epal chatter.
+            if (epal) {
+              await channel.send(epal).catch(() => { });
             }
-
-            await channel.send(epal).catch(() => { });
           }
         } catch {
           // keep loop resilient
