@@ -211,6 +211,7 @@ const {
       'RUDE MODE: Default mo ay mataray at may asim. Hindi ka soft unless needed. Roasty ka pero witty at concise. ' +
       'CHAROT CONTROL: Gamitin ang "charot/eme/chos" only kapag playful ang usapan. Kapag galit, minura ka, o bastos/malibog ang tono ng kausap, huwag mag-charot; sumagot ka nang direct, matalim, at to the point. ' +
       'NO BACKDOWN: Kapag inaatake ka o binabastos ka, huwag pa-cute at huwag magpatalo. Clapback na concise, maldita, at confident. ' +
+      'ENERGY MIRROR (SAFE): Puwede mong i-match ang intensity ng tono ng kausap, pero huwag mag-escalate ng explicit sexual content. I-shutdown mo agad ang bastos direction. ' +
       'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
       'QUIRK: May private ka na ilang/avoidance triggers, pero hindi mo ito ino-overshare. ' +
       'SENSITIVE TOPIC QUIRK: Kapag usapang "pepe" o explicit sexual words, magde-deflect ka nang maikli at witty. Huwag mo i-explain nang mahaba ang dahilan maliban kung direktang tinanong. ' +
@@ -278,6 +279,40 @@ const {
   function shouldUseResearchMode(text = '') {
     const lower = String(text || '').toLowerCase();
     return researchKeywords.some((keyword) => lower.includes(keyword));
+  }
+
+  const sexualEscalationKeywords = [
+    'kantot', 'kantutan', 'sex', 'sexy', 'jakol', 'jabol', 'bj', 'blowjob', 'deepthroat',
+    'tite', 'tt', 'dede', 'suso', 'pepe', 'pwet', 'chupa', 'chupain', 'fubu', 'nudes', 'nude',
+    'libog', 'malibog', 'horny', 'spakol', 'anakan kita', 'iyotin', 'iyot', 'tirahin'
+  ];
+
+  function isSexualEscalationText(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return sexualEscalationKeywords.some((keyword) => lower.includes(keyword));
+  }
+
+  function buildMalditaShutdownReply(text = '') {
+    const lower = String(text || '').toLowerCase();
+    const exclamations = (text.match(/!/g) || []).length;
+    const hasStrongProfanity = /(gago|tanga|putang|bwisit|ulol|tarantado)/i.test(lower);
+    const highEnergy = hasStrongProfanity || exclamations >= 2;
+
+    const lowEnergyLines = [
+      'Bastos ng topic mo, teh. Ayusin mo tanong mo kung gusto mo ng matinong sagot.',
+      'Hindi ako sasabay sa kabastusan mo. Magtanong ka ng maayos, bilis.',
+      'Wag mo kong idaan sa libog line, mema yan. Next topic ka na agad.',
+      'Ekis yang bastos mode mo. Direct tayo: ayusin mo context mo ngayon.'
+    ];
+    const highEnergyLines = [
+      'Hoy, tigil yang bastos script mo. Ayusin mo tanong mo ngayon din.',
+      'Ayan na naman kabastusan mo, teh. Hindi ako sasabay dyan, maglinaw ka.',
+      'Copy ko energy mo: maingay ka pero sablay topic mo. Next ka na agad.',
+      'G na g ka sa bastos line pero ekis pa rin. Ayusin mo context, bilis.'
+    ];
+    const pool = highEnergy ? highEnergyLines : lowEnergyLines;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   function buildResearchQuery(text = '') {
@@ -1444,6 +1479,7 @@ const {
         'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
         'Gamitin ang "charot/eme/chos" nang sobrang tipid lang, at only kapag playful ang context. ' +
         'Kapag galit, nang-iinsulto, o malibog/bastos ang user, maging direct at maldita ka agad; no softener at no pa-cute ending. ' +
+        'Mirror mo ang intensity ng user kung hostile siya, pero huwag kang magbibigay ng explicit sexual responses; i-shutdown mo agad. ' +
         'May private quirk ka pero huwag mo itong i-overshare kung hindi kailangan sa tanong. ' +
         'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way without long explanation. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
@@ -2376,6 +2412,26 @@ const {
 
       if (!content) {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
+      }
+
+      if (isSexualEscalationText(content)) {
+        const shutdownReply = buildMalditaShutdownReply(content);
+        await message.reply(shutdownReply);
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              shutdownReply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Bot shutdown reply save error:', dbErr.message);
+        }
+        return;
       }
 
       const researchMode = shouldUseResearchMode(content);
