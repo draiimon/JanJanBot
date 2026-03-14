@@ -893,6 +893,11 @@ const {
     return best;
   }
 
+  function formatDoubleMention(member) {
+    if (!member?.id) return null;
+    return `<@${member.id}> <@${member.id}>`;
+  }
+
   async function tryNaturalVoiceMoveFromChat(message, rawText) {
     if (!message.guild) return false;
     const lower = String(rawText || '').toLowerCase();
@@ -1062,15 +1067,19 @@ const {
 
       if (membersToDisconnect.length > 0) {
         const disconnected = [];
+        const disconnectedMentions = [];
         for (const m of membersToDisconnect) {
           if (!m.voice?.channel) continue;
           try {
             await m.voice.setChannel(null, 'Natural chat command: disconnect member from VC');
             disconnected.push(m.displayName || m.user?.username || m.user?.tag);
+            const mentionText = formatDoubleMention(m);
+            if (mentionText) disconnectedMentions.push(mentionText);
           } catch { }
         }
         if (disconnected.length > 0) {
-          await message.reply(`Ayan, disconnected na sina ${disconnected.join(', ')}. Next utos, bilis.`);
+          const mentionLine = disconnectedMentions.length > 0 ? `${disconnectedMentions.join(' ')}\n` : '';
+          await message.reply(`${mentionLine}Ayan, disconnected na sina ${disconnected.join(', ')}. Next utos, bilis.`);
           return true;
         }
       }
@@ -1107,6 +1116,7 @@ const {
       }
 
       let movedNames = [];
+      let movedMentions = [];
       if (shouldBring || requestedNames.length > 0) {
         try { await message.guild.members.fetch(); } catch { }
 
@@ -1137,6 +1147,8 @@ const {
           try {
             await memberToMove.voice.setChannel(target, 'Natural chat command: bring member to VC');
             movedNames.push(memberToMove.displayName || memberToMove.user.username || memberToMove.user.tag);
+            const mentionText = formatDoubleMention(memberToMove);
+            if (mentionText) movedMentions.push(mentionText);
           } catch {
             // ignore per-user move errors; continue for others
           }
@@ -1178,7 +1190,8 @@ const {
         : '';
       const finalMoveReplyRaw = aiMoveReply || `Ayan, lumipat na ako sa ${target.name}.${movedSuffix} Huwag ka nang maingay, teh.`;
       const finalMoveReply = lessenCharotWords(finalMoveReplyRaw, isHostileText(rawText));
-      await message.reply(finalMoveReply);
+      const mentionLine = movedMentions.length > 0 ? `${movedMentions.join(' ')}\n` : '';
+      await message.reply(`${mentionLine}${finalMoveReply}`);
     } catch (err) {
       console.error('[VOICE MOVE] natural move failed:', err.message);
       await message.reply('Hindi ako nakalipat, may sabit. Try mo ulit, teh.');
@@ -3516,7 +3529,23 @@ const {
         const finalReply = sourceLines.length > 0
           ? `${normalizedReply}\n\nSources:\n${sourceLines.join('\n')}`
           : normalizedReply;
-        const safeReply = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
+        const mentionTargets = message.mentions?.users
+          ? [...message.mentions.users.values()].filter((u) => u.id !== client.user.id)
+          : [];
+        const shouldDoubleMention =
+          mentionTargets.length > 0 &&
+          (
+            hasVoiceMoveCueWords(content) ||
+            isNaturalVoiceMoveIntent(content) ||
+            isDisconnectIntent(content) ||
+            /\b(si|sina|bring|move|lipat|iakyat|ibaba|target|mention)\b/i.test(content)
+          );
+        const mentionHeader = shouldDoubleMention
+          ? `${mentionTargets.map((u) => `<@${u.id}> <@${u.id}>`).join(' ')}\n`
+          : '';
+
+        const replyWithMentions = `${mentionHeader}${finalReply}`.trim();
+        const safeReply = replyWithMentions.length > 1900 ? `${replyWithMentions.slice(0, 1900)}...` : replyWithMentions;
 
         await message.reply(safeReply);
 
