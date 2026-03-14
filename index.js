@@ -296,7 +296,7 @@ const {
 
   const researchKeywords = [
     'latest', 'news', 'balita', 'current', 'today', 'recent', 'research', 'search',
-    'look up', 'ano nangyari', 'real time', 'price', 'update'
+    'look up', 'ano nangyari', 'real time', 'price', 'update', 'meta', 'patch', 'comp', 'tier list'
   ];
 
   function shouldUseResearchMode(text = '') {
@@ -377,6 +377,69 @@ const {
       .slice(0, 220);
   }
 
+  function parseMaybeDate(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  }
+
+  function extractDomain(url = '') {
+    try {
+      const u = new URL(String(url || ''));
+      return u.hostname.replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  }
+
+  function sanitizeSnippet(text = '', maxLen = 420) {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .replace(/[\u0000-\u001f]/g, ' ')
+      .trim()
+      .slice(0, maxLen);
+  }
+
+  function scoreResearchResult(item) {
+    let score = 0;
+    if (item.snippet && item.snippet.length >= 80) score += 2;
+    if (item.snippet && item.snippet.length >= 180) score += 2;
+    if (item.title && item.title.length >= 8) score += 1;
+    if (item.publishedAt) {
+      const ageDays = Math.max(0, (Date.now() - item.publishedAt.getTime()) / (1000 * 60 * 60 * 24));
+      if (ageDays <= 2) score += 3;
+      else if (ageDays <= 7) score += 2;
+      else if (ageDays <= 30) score += 1;
+    }
+    return score;
+  }
+
+  function assessResearchConfidence(results = [], originalQuery = '') {
+    const q = String(originalQuery || '').toLowerCase();
+    if (!Array.isArray(results) || results.length === 0) {
+      return { low: true, note: 'Walang solid sources na nakuha ngayon.' };
+    }
+    const veryRecentIntent = /\b(latest|today|now|breaking|recent|update|balita|price|meta|patch)\b/.test(q);
+    const withDates = results.filter((r) => r.publishedAt);
+    const recentEnough = withDates.filter((r) => {
+      const ageDays = (Date.now() - r.publishedAt.getTime()) / (1000 * 60 * 60 * 24);
+      return ageDays <= 14;
+    });
+    const strongSnippets = results.filter((r) => (r.snippet || '').length >= 120);
+
+    if (results.length < 2) {
+      return { low: true, note: 'Isang source lang nakuha ko, so hindi pa fully verified.' };
+    }
+    if (strongSnippets.length < 2) {
+      return { low: true, note: 'Manipis yung source context, kaya may uncertainty pa.' };
+    }
+    if (veryRecentIntent && withDates.length > 0 && recentEnough.length === 0) {
+      return { low: true, note: 'May sources pero mukhang hindi fresh para sa “latest” query.' };
+    }
+    return { low: false, note: '' };
+  }
+
   async function searchWithTavily(query, maxResults = 3) {
     if (!TAVILY_API_KEY) return [];
     const conciseQuery = buildResearchQuery(query);
@@ -387,21 +450,40 @@ const {
         api_key: TAVILY_API_KEY,
         query: conciseQuery,
         search_depth: 'basic',
-        max_results: maxResults
+        max_results: Math.max(3, Math.min(5, Number(maxResults) || 3))
       }, {
         headers: { 'Content-Type': 'application/json' },
         timeout: 20000
       });
 
       const results = Array.isArray(response.data?.results) ? response.data.results : [];
-      return results
+      const normalized = results
         .filter((r) => r && r.url)
-        .slice(0, maxResults)
-        .map((r) => ({
-          title: String(r.title || 'Untitled'),
-          url: String(r.url),
-          snippet: String(r.content || r.snippet || '').slice(0, 500)
-        }));
+        .map((r) => {
+          const publishedAt = parseMaybeDate(r.published_date || r.publishedAt || r.date || r.timestamp);
+          const item = {
+            title: String(r.title || 'Untitled'),
+            url: String(r.url),
+            snippet: sanitizeSnippet(r.content || r.snippet || '', 460),
+            domain: extractDomain(r.url),
+            publishedAt
+          };
+          return { ...item, _score: scoreResearchResult(item) };
+        })
+        .filter((r) => r.snippet.length > 20);
+
+      const deduped = [];
+      const seen = new Set();
+      for (const r of normalized.sort((a, b) => b._score - a._score)) {
+        const key = `${r.domain}|${String(r.title).toLowerCase().trim()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(r);
+      }
+
+      return deduped
+        .slice(0, Math.max(3, Math.min(5, Number(maxResults) || 3)))
+        .map(({ _score, ...rest }) => rest);
     } catch (err) {
       console.warn('[TAVILY] Search failed:', err.response?.status || err.message);
       return [];
@@ -2112,6 +2194,7 @@ const {
 
           const researchMode = shouldUseResearchMode(transcript);
           const tavilyResults = researchMode ? await searchWithTavily(transcript, 3) : [];
+          const researchConfidence = researchMode ? assessResearchConfidence(tavilyResults, transcript) : { low: false, note: '' };
 
           let aiReply = 'Hindi ko nasagot, ghorl.';
           if (researchMode && tavilyResults.length === 0) {
@@ -2145,8 +2228,13 @@ const {
           }
 
           if (researchMode && tavilyResults.length > 0 && textChannel?.isTextBased?.()) {
-            const sourceLines = tavilyResults.slice(0, 3).map((r) => `- [${r.title}](${r.url})`);
-            await textChannel.send(`Eto source mo, basahin mo rin ha.\n${sourceLines.join('\n')}`).catch(() => { });
+            const sourceLines = tavilyResults
+              .slice(0, 3)
+              .map((r) => `- [${r.title}](${r.url})${r.publishedAt ? ` (${r.publishedAt.toISOString().slice(0, 10)})` : ''}`);
+            const confidenceLine = researchConfidence.low && researchConfidence.note
+              ? `\nNote: ${researchConfidence.note}`
+              : '';
+            await textChannel.send(`Eto source mo, basahin mo rin ha.${confidenceLine}\n${sourceLines.join('\n')}`).catch(() => { });
           }
 
           try {
@@ -2711,7 +2799,7 @@ const {
       `\n[REAL TIME]: UTC ${nowUtc.toISOString()} | PH ${nowPh.toISOString()} | Month: ${nowPh.toLocaleString('en-US', { timeZone: 'Asia/Manila', month: 'long' })} ${nowPh.getFullYear()}. ` +
       'Kapag may tanong na period-based, gamitin itong petsa at oras.';
     const webContext = researchContext.length > 0
-      ? `\n[SEARCH CONTEXT - GAMITIN MO ITO PARA SA LATEST/CURRENT QUESTIONS]:\n${researchContext.map((r, i) => `${i + 1}. ${r.title}\nURL: ${r.url}\nSnippet: ${r.snippet}`).join('\n\n')}\n`
+      ? `\n[SEARCH CONTEXT - GAMITIN MO ITO PARA SA LATEST/CURRENT QUESTIONS]:\n${researchContext.map((r, i) => `${i + 1}. ${r.title}\nURL: ${r.url}\nDomain: ${r.domain || 'unknown'}\nPublished: ${r.publishedAt ? r.publishedAt.toISOString().slice(0, 10) : 'unknown'}\nSnippet: ${r.snippet}`).join('\n\n')}\n`
       : '';
 
     // Fetch channel summary, user facts, and Master DNA from DB
@@ -2853,6 +2941,7 @@ const {
       '\n[OUTPUT STYLE]: 1-2 short sentences lang unless user explicitly asked for long format. Dapat coherent at direct sa latest message.' +
       '\n[HUMANLIKE FLOW]: intent-first, direct answer, then optional one-line follow-up. No rambling, no random topic jump.' +
       '\n[DIRECTNESS RULE]: If user asks a question, first sentence must answer it or ask one precise clarifying question.' +
+      '\n[SOURCE HONESTY RULE]: If source evidence is weak/conflicting/old, sabihin mo clearly na uncertain ka kaysa manghula.' +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
@@ -3655,6 +3744,7 @@ const {
 
       const researchMode = shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
+      const researchConfidence = researchMode ? assessResearchConfidence(tavilyResults, content) : { low: false, note: '' };
       const discordContext = await buildDiscordAwarenessContext(message, fastMode);
       const mentionContext = buildMentionContext(message);
 
@@ -3734,9 +3824,13 @@ const {
         const normalizedReply = lessenCharotWords(guardedReply, hostileMode);
         const sourceLines = tavilyResults
           .slice(0, 3)
-          .map((r) => `- [${r.title}](${r.url})`);
+          .map((r) => `- [${r.title}](${r.url})${r.publishedAt ? ` (${r.publishedAt.toISOString().slice(0, 10)})` : ''}`);
+        const uncertaintyLine =
+          researchMode && researchConfidence.low && researchConfidence.note
+            ? `\n\nNote: ${researchConfidence.note}`
+            : '';
         const finalReply = sourceLines.length > 0
-          ? `${normalizedReply}\n\nSources:\n${sourceLines.join('\n')}`
+          ? `${normalizedReply}${uncertaintyLine}\n\nSources:\n${sourceLines.join('\n')}`
           : normalizedReply;
         const mentionTargets = message.mentions?.users
           ? [...message.mentions.users.values()].filter((u) => u.id !== client.user.id)
