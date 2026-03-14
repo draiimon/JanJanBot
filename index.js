@@ -64,6 +64,10 @@ const {
     '1426746103797256200',
     '1427128206431096913'
   ]);
+  const ALWAYS_DEEP_CONTEXT_CHANNEL_IDS = new Set([
+    '1426746103797256200',
+    '1427128206431096913'
+  ]);
   const HOME_VC_CHANNEL_ID = '1427128206431096913';
   const voiceChannelAliasMap = new Map([
     ['monkeybars', '1427128206431096913'],
@@ -431,6 +435,25 @@ const {
       recentNames = [];
     }
 
+    const deepContextChannel = ALWAYS_DEEP_CONTEXT_CHANNEL_IDS.has(message.channel.id);
+    let recentChannelConversation = 'none';
+    try {
+      const channelConvRes = await pool.query(
+        'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT $2',
+        [message.channel.id, deepContextChannel ? (fastMode ? 16 : 28) : (fastMode ? 8 : 14)]
+      );
+      const lines = channelConvRes.rows
+        .reverse()
+        .map((row) => {
+          const tag = String(row.author_tag || 'unknown');
+          const snippet = String(row.content || '').replace(/\s+/g, ' ').slice(0, 110);
+          return `${tag}: ${snippet}`;
+        });
+      recentChannelConversation = lines.join(' || ') || 'none';
+    } catch {
+      recentChannelConversation = 'none';
+    }
+
     let guildRecentOverview = 'none';
     try {
       const recentGuildRes = await pool.query(
@@ -474,6 +497,7 @@ const {
       `Known text channels: ${channelNames.join(', ') || 'none'}\n` +
       `Voice channels and members: ${voiceChannels.join(' | ') || 'none'}\n` +
       `Recent nicknames in this channel: ${recentNames.join(', ') || 'none'}\n` +
+      `Recent conversation in this channel: ${recentChannelConversation}\n` +
       `Recent server-wide chat overview: ${guildRecentOverview}\n` +
       `Rule: Use nicknames and channel names naturally when relevant.`
     );
@@ -2172,9 +2196,11 @@ const {
     let historyMessages = [];
     if (channelId) {
       try {
+        const deepHistoryChannel = ALWAYS_DEEP_CONTEXT_CHANNEL_IDS.has(String(channelId));
+        const historyLimit = deepHistoryChannel ? (fastMode ? 24 : 40) : 15;
         const historyRes = await pool.query(
-          'SELECT author_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
-          [channelId]
+          'SELECT author_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT $2',
+          [channelId, historyLimit]
         );
         historyMessages = historyRes.rows.reverse().map(row => ({
           role: row.author_id === client.user.id ? 'assistant' : 'user',
