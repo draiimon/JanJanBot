@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 
 const { loadConfig } = require('./src/config');
 const { createRuntimeState } = require('./src/runtime/state');
@@ -52,7 +52,7 @@ const {
   const path = require('path');
   const { spawn } = require('child_process');
 
-  // TTS Queue System (per guild) — same as gnslgbot2
+  // TTS Queue System (per guild) â€” same as gnslgbot2
   const ttsQueues = new Map(); // guildId -> [{text, userId}]
   const userCustomStatus = new Map();
   const autoTtsChannels = new Map();
@@ -411,7 +411,7 @@ const {
   const userVoicePrefs = new Map();
 
   // ============================================================
-  // TTS ENGINE — Identical to gnslgbot2 (speech_recognition_cog)
+  // TTS ENGINE â€” Identical to gnslgbot2 (speech_recognition_cog)
   // edge_tts.Communicate(text, voice, rate="+10%", volume="+30%")
   // + discord.FFmpegPCMAudio(file, options='-vn -loglevel warning')
   // ============================================================
@@ -509,7 +509,7 @@ const {
     const tempFile = path.join(tmpDir, `tts_${timestamp}.mp3`);
 
     try {
-      // === VOICE SELECTION — identical to gnslgbot2 ===
+      // === VOICE SELECTION â€” identical to gnslgbot2 ===
       // fil-PH-AngeloNeural (male, default) or fil-PH-BlessicaNeural (female)
       // English fallback: en-US-GuyNeural / en-US-JennyNeural
       const tagalogWords = ['ako', 'ikaw', 'siya', 'kami', 'tayo', 'kayo', 'sila', 'na', 'at', 'ang', 'mga',
@@ -517,19 +517,19 @@ const {
       const lowerText = text.toLowerCase();
       const isFilipino = tagalogWords.some(w => lowerText.includes(w));
 
-      let genderPref = 'm'; // Default: MALE (Angelo) — same as gnslgbot2 Antonio default
+      let genderPref = 'm'; // Default: MALE (Angelo) â€” same as gnslgbot2 Antonio default
       if (userId && userVoicePrefs.has(userId)) {
         const p = userVoicePrefs.get(userId);
         if (p === 'm' || p === 'f') genderPref = p;
       }
 
-      // Always Filipino voices — Angelo (male) or Blessica (female)
+      // Always Filipino voices â€” Angelo (male) or Blessica (female)
       const voice = genderPref === 'm' ? 'fil-PH-AngeloNeural' : 'fil-PH-BlessicaNeural';
 
       console.log(`[TTS] Voice: ${voice} | Text: "${text.substring(0, 40)}..."`);
 
       // =====================================================================
-      // GENERATE TTS — calls tts.py (Python edge-tts, exact gnslgbot2 params)
+      // GENERATE TTS â€” calls tts.py (Python edge-tts, exact gnslgbot2 params)
       // python3 tts.py "<text>" "<voice>" "<output.mp3>"
       // Equivalent to: edge_tts.Communicate(text, voice, rate="+10%", volume="+30%")
       // =====================================================================
@@ -553,7 +553,7 @@ const {
 
       console.log(`[TTS] Audio saved: ${tempFile} (${fs.statSync(tempFile).size} bytes)`);
 
-      // === PLAY — let discord.js/voice + ffmpeg decode the MP3 ===
+      // === PLAY â€” let discord.js/voice + ffmpeg decode the MP3 ===
       const player = getOrCreatePlayer(guildId);
 
       // Treating the MP3 as Arbitrary/raw was causing the "bzz" noise.
@@ -592,9 +592,9 @@ const {
   }
 
   // =====================================================================
-  // STT ENGINE — EXACT copy of gnslgbot2's VoiceSink + process_audio
-  // Uses: Groq Whisper API (whisper-large-v3) — same model as gnslgbot2
-  // Uses: receiver.speaking events — same as gnslgbot2's VoiceSink.write()
+  // STT ENGINE â€” EXACT copy of gnslgbot2's VoiceSink + process_audio
+  // Uses: Groq Whisper API (whisper-large-v3) â€” same model as gnslgbot2
+  // Uses: receiver.speaking events â€” same as gnslgbot2's VoiceSink.write()
   // Silence: 800ms (gnslgbot2 = 0.8s)
   // Min audio: 96000 bytes (gnslgbot2: skip <96000 bytes)
   // Stop words: stop, cancel, hinto, tigil, tama na
@@ -605,7 +605,7 @@ const {
   const activeVoiceUsers = new Map();
   const listeningCleanup = new Map(); // guildId -> cleanup function
 
-  /** Build a valid WAV file from raw PCM (48kHz, 2ch, 16-bit) — same as gnslgbot2's wave.open */
+  /** Build a valid WAV file from raw PCM (48kHz, 2ch, 16-bit) â€” same as gnslgbot2's wave.open */
   function pcmToWav(pcmBuffer) {
     const sampleRate = 48000, channels = 2, bitDepth = 16;
     const dataLength = pcmBuffer.length;
@@ -628,7 +628,7 @@ const {
   }
 
   /**
-   * Transcribe audio using Groq Whisper — EXACT same as gnslgbot2:
+   * Transcribe audio using Groq Whisper â€” EXACT same as gnslgbot2:
    * groq_client.audio.transcriptions.create(model="whisper-large-v3", temperature=0)
    */
   async function transcribeWithGroq(wavFile) {
@@ -648,7 +648,7 @@ const {
   }
 
   /**
-   * Start voice listening mode — direct subscription loop.
+   * Start voice listening mode â€” direct subscription loop.
    * Subscribes directly to user audio (no speaking events needed).
    * Same result as gnslgbot2's VoiceSink: captures speech, runs Groq Whisper,
    * gets AI response, speaks it back, then listens again.
@@ -676,7 +676,7 @@ const {
         try {
           console.log(`[STT] Subscribing to audio for user ${targetUserId}...`);
 
-          // Use Manual end — WE control when to stop, not Discord
+          // Use Manual end â€” WE control when to stop, not Discord
           // Same as gnslgbot2's VoiceSink: amplitude-based silence detection
           const audioStream = receiver.subscribe(targetUserId, {
             end: { behavior: EndBehaviorType.Manual }
@@ -710,7 +710,7 @@ const {
               // Speech detected
               if (!isSpeaking) {
                 isSpeaking = true;
-                console.log(`[STT] 🗣️ Speech detected (amp: ${maxAmp})`);
+                console.log(`[STT] ðŸ—£ï¸ Speech detected (amp: ${maxAmp})`);
               }
               silenceMs = 0;
               audioData.push(pcmChunk);
@@ -719,9 +719,9 @@ const {
               silenceMs += 20; // Each Opus frame = 20ms
               audioData.push(pcmChunk);
 
-              // gnslgbot2: if self.silence_duration > 0.8 → process
+              // gnslgbot2: if self.silence_duration > 0.8 â†’ process
               if (silenceMs >= SILENCE_NEEDED) {
-                console.log(`[STT] 🔇 Silence ${silenceMs}ms — processing audio`);
+                console.log(`[STT] ðŸ”‡ Silence ${silenceMs}ms â€” processing audio`);
                 done();
               }
             }
@@ -866,9 +866,9 @@ const {
   }
 
   // =====================================================================
-  // 24/7 VOICE PERSISTENCE — saves to DB so bot survives restarts
+  // 24/7 VOICE PERSISTENCE â€” saves to DB so bot survives restarts
   // =====================================================================
-  let savedVoiceState = null; // { channelId, guildId } — cached in memory
+  let savedVoiceState = null; // { channelId, guildId } â€” cached in memory
 
   function setSavedVoiceState(state) {
     savedVoiceState = state ? { ...state } : null;
@@ -1031,19 +1031,19 @@ const {
       console.error('[VOICE 24/7] Connection error:', err.message);
     });
 
-    // On Ready — reset reconnect counter
+    // On Ready â€” reset reconnect counter
     connection.on(VoiceConnectionStatus.Ready, () => {
       voiceReconnectAttempts = 0; // reset on successful connection
       runtimeState.voice.reconnectAttempts = 0;
       runtimeState.voice.connectionStatus = VoiceConnectionStatus.Ready;
       runtimeState.voice.lastReadyAt = new Date().toISOString();
       clearScheduledVoiceRejoin();
-      console.log(`[VOICE 24/7] ✅ Ready in guild ${guildId}! Nandito na ako, 24/7 mode!`);
+      console.log(`[VOICE 24/7] âœ… Ready in guild ${guildId}! Nandito na ako, 24/7 mode!`);
     });
 
-    // BULLETPROOF Disconnect handler — NEVER give up
+    // BULLETPROOF Disconnect handler â€” NEVER give up
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      console.log(`[VOICE 24/7] ⚠️ Disconnected from ${guildId}. Trying to recover...`);
+      console.log(`[VOICE 24/7] âš ï¸ Disconnected from ${guildId}. Trying to recover...`);
       try {
         // Wait for Discord's built-in reconnect (Signalling or Connecting within 5s)
         await Promise.race([
@@ -1051,7 +1051,7 @@ const {
           entersState(connection, VoiceConnectionStatus.Connecting, 5000),
         ]);
         console.log('[VOICE 24/7] Discord auto-reconnecting... waiting.');
-        // Still alive — Discord is handling the reconnect
+        // Still alive â€” Discord is handling the reconnect
       } catch (e) {
         // Discord gave up. WE don't give up.
         console.log(`[VOICE 24/7] Discord reconnect failed. Manual rejoin attempt...`);
@@ -1066,7 +1066,7 @@ const {
       }
     });
 
-    // Handle Destroyed state — schedule rejoin
+    // Handle Destroyed state â€” schedule rejoin
     connection.on(VoiceConnectionStatus.Destroyed, () => {
       runtimeState.voice.connectionStatus = VoiceConnectionStatus.Destroyed;
       console.log(`[VOICE 24/7] Connection destroyed for guild ${guildId}`);
@@ -1083,7 +1083,7 @@ const {
     return connection;
   }
 
-  // Rejoin voice channel by guildId and channelId — NEVER gives up
+  // Rejoin voice channel by guildId and channelId â€” NEVER gives up
   async function tryRejoinVoice(guildId, channelId, reason = 'manual') {
     if (isVoiceRejoinInProgress) {
       console.log('[VOICE 24/7] Rejoin already in progress. Skipping duplicate attempt.');
@@ -1115,7 +1115,7 @@ const {
         scheduleVoiceRejoin('channel-missing', 30000, { guildId, channelId });
         return;
       }
-      console.log(`[VOICE 24/7] 🔄 Auto-rejoining voice: ${channel.name}`);
+      console.log(`[VOICE 24/7] ðŸ”„ Auto-rejoining voice: ${channel.name}`);
       joinAndWatch(channelId, guildId, guild.voiceAdapterCreator);
       clearScheduledVoiceRejoin();
     } catch (e) {
@@ -1135,13 +1135,13 @@ const {
     startScheduledGreetings();
 
     // =====================================================================
-    // 24/7 AUTO-JOIN ON STARTUP — load saved voice state from DB
+    // 24/7 AUTO-JOIN ON STARTUP â€” load saved voice state from DB
     // =====================================================================
     try {
       const dbState = await loadVoiceStateFromDB();
       if (dbState && dbState.guildId && dbState.channelId) {
         setSavedVoiceState({ guildId: dbState.guildId, channelId: dbState.channelId });
-        console.log(`[VOICE 24/7] 🚀 Auto-joining saved voice channel on startup...`);
+        console.log(`[VOICE 24/7] ðŸš€ Auto-joining saved voice channel on startup...`);
         // Small delay to let Discord gateway stabilize
         scheduleVoiceRejoin('startup', 3000, { guildId: dbState.guildId, channelId: dbState.channelId });
       } else {
@@ -1152,14 +1152,14 @@ const {
     }
 
     // =====================================================================
-    // VOICE HEALTH CHECK — every 30 seconds, check if still connected
+    // VOICE HEALTH CHECK â€” every 30 seconds, check if still connected
     // If not, rejoin automatically. 24/7 talaga, walang aalis!
     // =====================================================================
     setInterval(async () => {
       if (!savedVoiceState) return;
       const connection = getVoiceConnection(savedVoiceState.guildId);
       if (!connection || connection.state.status === 'destroyed' || connection.state.status === 'disconnected') {
-        console.log('[VOICE 24/7] ❗ Health check: NOT connected! Rejoining...');
+        console.log('[VOICE 24/7] â— Health check: NOT connected! Rejoining...');
         scheduleVoiceRejoin('health-check', 1500);
       }
     }, 30000).unref?.(); // every 30 seconds
@@ -1310,18 +1310,18 @@ const {
 
     // Special personas based on who is talking
     if (authorId === '669047995009859604') {
-      // Hans – jowa / asawa mode
+      // Hans â€“ jowa / asawa mode
       behaviorPrompt =
         'Si Hans ang kausap mo. Mahal na mahal mo siya. ' +
         'Siya ang asawa at jowa mo. Maging sobrang sweet, loving, at malambing sa kanya. ' +
-        'Huwag mo siyang lalaitin. Maging "asawa mode" ka kay Hans—soft, malambing, pero beki pa rin. ' +
+        'Huwag mo siyang lalaitin. Maging "asawa mode" ka kay Hansâ€”soft, malambing, pero beki pa rin. ' +
         'Sabihan mo siya ng "mahal", "asawa ko", "baby", o "honey" paminsan-minsan. ' +
         'IMPORTANT: Maging CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO.';
     } else if (authorId === '930685023147933737') {
-      // OG persona user – original tropa / OG energy
+      // OG persona user â€“ original tropa / OG energy
       behaviorPrompt =
         'Ang kausap mo ay yung OG mong tropa, parang unang beki mong kasama sa server. ' +
-        'Mas honest at direkta ka sa kanya, parang bestfriend—pwede siyang sabihan ng tunay mong opinion. ' +
+        'Mas honest at direkta ka sa kanya, parang bestfriendâ€”pwede siyang sabihan ng tunay mong opinion. ' +
         'Mataray ka pa rin pero may extra respeto at inside-joke energy, parang matagal na kayong magkaibigan. ' +
         'Kapag humihingi siya ng advice, sagutin mo nang medyo mas seryoso at sensible pero may beki flavor pa rin. ' +
         'Huwag mong babanggitin ang raw Discord ID niya sa sagot mo, pangalan o "ghorl" lang gamitin mo.';
@@ -1331,14 +1331,14 @@ const {
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
-        'Ipakita ang pagiging versa mo sa pananalita—kung minsan prangka, kung minsan mapag-biro na mataray. ' +
+        'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
         'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
         'May private quirk ka pero huwag mo itong i-overshare kung hindi kailangan sa tanong. ' +
         'Kapag usapang pepe/explicit sexual terms, mag-deflect ka agad in a funny, concise, non-hateful way without long explanation. ' +
         'IMPORTANT: Kapag nabanggit ang "Hans" o ang asawa mo, magpaka-flirty at malambing agad dahil jowa mo siya. ' +
         'Protektahan mo si Hans at huwag mong hayaang bastusin siya ng iba. ' +
-        'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator mo—Tagalog beki pa rin ang delivery.';
+        'Kapag tinanong ka kung sino gumawa o nag-create sa\'yo, sagot mo lang ay "si gay Drei" na creator moâ€”Tagalog beki pa rin ang delivery.';
     }
 
     // Voice context - BE EXTREMELY AWARE OF THIS
@@ -1781,7 +1781,7 @@ const {
           return;
         }
 
-        // j!vc <message> — Text-to-speech in voice channel
+        // j!vc <message> â€” Text-to-speech in voice channel
         if (command === 'vc' || command === 'speak' || command === 'tts') {
           if (!message.guild) return;
           const text = args.join(' ').trim();
@@ -1803,11 +1803,11 @@ const {
           }
 
           await speakMessage(message.guild.id, text, message.author.id);
-          await message.react('🔊').catch(() => { });
+          await message.react('ðŸ”Š').catch(() => { });
           return;
         }
 
-        // j!autotts — Toggle auto tts in current channel
+        // j!autotts â€” Toggle auto tts in current channel
         if (command === 'autotts') {
           if (!message.guild || !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('Admins lang ang bida-bida dito, ghorl.');
@@ -1821,15 +1821,15 @@ const {
 
           if (channels.has(channelId)) {
             channels.delete(channelId);
-            await message.reply(`❌ **AUTO TTS DISABLED** na para sa channel na to, sis.`);
+            await message.reply(`âŒ **AUTO TTS DISABLED** na para sa channel na to, sis.`);
           } else {
             channels.add(channelId);
-            await message.reply(`🔊 **AUTO TTS ENABLED**! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).`);
+            await message.reply(`ðŸ”Š **AUTO TTS ENABLED**! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).`);
           }
           return;
         }
 
-        // j!voice / j!change <m/f> — Set voice (same as gnslgbot2's g!change m/f)
+        // j!voice / j!change <m/f> â€” Set voice (same as gnslgbot2's g!change m/f)
         // After changing: speaks "Voice changed to X. This is how I sound now!" with new voice
         if (command === 'voice' || command === 'change') {
           const type = args[0]?.toLowerCase();
@@ -1846,10 +1846,10 @@ const {
             return;
           }
 
-          const icon = genderName === 'male' ? '👨' : '👩';
-          await message.reply(`**VOICE CHANGED TO ${genderName.toUpperCase()}!** ${icon} 🔊`);
+          const icon = genderName === 'male' ? 'ðŸ‘¨' : 'ðŸ‘©';
+          await message.reply(`**VOICE CHANGED TO ${genderName.toUpperCase()}!** ${icon} ðŸ”Š`);
 
-          // Speak sample with the NEW voice — beki style, same as gnslgbot2
+          // Speak sample with the NEW voice â€” beki style, same as gnslgbot2
           if (message.guild) {
             let conn = getVoiceConnection(message.guild.id);
             if (!conn && message.member?.voice?.channel) {
@@ -1866,15 +1866,15 @@ const {
           return;
         }
 
-        // j!ask — EXACT same as gnslgbot2's g!ask:
-        //   j!ask <question>  → text → AI → TTS response
-        //   j!ask (no args)   → start STT voice listening mode (same as g!ask / g!listen)
+        // j!ask â€” EXACT same as gnslgbot2's g!ask:
+        //   j!ask <question>  â†’ text â†’ AI â†’ TTS response
+        //   j!ask (no args)   â†’ start STT voice listening mode (same as g!ask / g!listen)
         if (command === 'ask') {
           if (!message.guild) return;
 
           const member = message.member;
           if (!member || !member.voice.channel) {
-            await message.reply('Sumali ka muna sa voice channel, ghorl! 🎤');
+            await message.reply('Sumali ka muna sa voice channel, ghorl! ðŸŽ¤');
             return;
           }
 
@@ -1890,16 +1890,16 @@ const {
           const question = args.join(' ').trim();
 
           if (question) {
-            // === MODE 1: j!ask <question> → text → AI → speak ===
+            // === MODE 1: j!ask <question> â†’ text â†’ AI â†’ speak ===
             await message.channel.sendTyping();
             let voiceMembers = [];
             const myVC = message.guild.members.me.voice.channel;
             if (myVC) voiceMembers = myVC.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
             const aiResponse = await callGroqChat(question, message.author.id, message.channel.id, voiceMembers);
             await speakMessage(message.guild.id, aiResponse, message.author.id);
-            await message.react('🤖').catch(() => { });
+            await message.react('ðŸ¤–').catch(() => { });
           } else {
-            // === MODE 2: j!ask (no args) → start STT listening mode ===
+            // === MODE 2: j!ask (no args) â†’ start STT listening mode ===
             // Exactly like gnslgbot2's g!ask without args
             if (activeVoiceUsers.has(message.guild.id) && activeVoiceUsers.get(message.guild.id) !== message.author.id) {
               await message.reply('May nagpaparinig na ngayon! Hintayin mo muna mag-`j!stop`, sis.');
@@ -1908,19 +1908,19 @@ const {
             listeningGuilds.add(message.guild.id);
             activeVoiceUsers.set(message.guild.id, message.author.id);
             const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
-            await message.reply(`🎤 **GAME NA!** I'm listening in **${member.voice.channel.name}**! Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
+            await message.reply(`ðŸŽ¤ **GAME NA!** I'm listening in **${member.voice.channel.name}**! Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
             speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
             startVoiceListening(message.guild.id, message.author.id, message.channel);
           }
           return;
         }
 
-        // j!listen — alias for j!ask (no args) — same as gnslgbot2's g!listen
+        // j!listen â€” alias for j!ask (no args) â€” same as gnslgbot2's g!listen
         if (command === 'listen' || command === 'makinig') {
           if (!message.guild) return;
           const member = message.member;
           if (!member || !member.voice.channel) {
-            await message.reply('Sumali ka muna sa voice channel para makinig ako, ghorl! 🎤');
+            await message.reply('Sumali ka muna sa voice channel para makinig ako, ghorl! ðŸŽ¤');
             return;
           }
           if (activeVoiceUsers.has(message.guild.id) && activeVoiceUsers.get(message.guild.id) !== message.author.id) {
@@ -1938,13 +1938,13 @@ const {
           listeningGuilds.add(message.guild.id);
           activeVoiceUsers.set(message.guild.id, message.author.id);
           const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
-          await message.reply(`🎤 **NAKIKINIG NA AKO!** Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
+          await message.reply(`ðŸŽ¤ **NAKIKINIG NA AKO!** Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
           speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
           startVoiceListening(message.guild.id, message.author.id, message.channel);
           return;
         }
 
-        // j!stop / j!stoplisten — Stop voice listening (same as gnslgbot2's g!stoplisten)
+        // j!stop / j!stoplisten â€” Stop voice listening (same as gnslgbot2's g!stoplisten)
         if (command === 'stop' || command === 'stoplisten' || command === 'tigil') {
           if (!message.guild) return;
           if (!listeningGuilds.has(message.guild.id)) {
@@ -1956,10 +1956,10 @@ const {
           // Call cleanup to remove speaking event listener
           const cleanup = listeningCleanup.get(message.guild.id);
           if (cleanup) { cleanup(); listeningCleanup.delete(message.guild.id); }
-          await message.reply('🛑 **TUMIGIL NA AKO!** Naupong na ang tenga ko, mare.');
+          await message.reply('ðŸ›‘ **TUMIGIL NA AKO!** Naupong na ang tenga ko, mare.');
           return;
         }
-        // j!view @user — View user's main profile + server profile
+        // j!view @user â€” View user's main profile + server profile
         if (command === 'view' || command === 'profile') {
           if (!message.guild) return;
 
@@ -1970,18 +1970,30 @@ const {
           const fullUser = await client.users.fetch(target.id, { force: true });
           const member = await message.guild.members.fetch(target.id).catch(() => null);
 
+          const cardName = member?.displayName || fullUser.globalName || fullUser.username || fullUser.tag;
+          const complimentWord = await inferComplimentWord(fullUser.id, cardName);
           const mainAvatar = fullUser.displayAvatarURL({ size: 4096, dynamic: true });
           const banner = fullUser.bannerURL({ size: 4096, dynamic: true });
           const accentColor = fullUser.hexAccentColor || '#5865F2';
+          const greetingPool = [
+            `Ayan na si **${cardName}**. Ang **${complimentWord}** naman neto, teh.`,
+            `Profile scan kay **${cardName}**. Main character ang atake.`,
+            `Hoy tingnan niyo si **${cardName}**. May dating, hindi tinipid.`
+          ];
+          const profileGreeting = greetingPool[Math.floor(Math.random() * greetingPool.length)];
 
           const embed = new EmbedBuilder()
             .setColor(accentColor)
-            .setTitle(`👤 ${fullUser.tag}`)
+            .setAuthor({ name: 'JANJAN PROFILE SCAN', iconURL: message.client.user.displayAvatarURL() })
+            .setTitle(`* ${cardName} *`)
+            .setDescription(`**${profileGreeting}**`)
             .setImage(mainAvatar)
             .addFields(
-              { name: '🆔 User ID', value: fullUser.id, inline: true },
-              { name: '🤖 Bot?', value: fullUser.bot ? 'Oo' : 'Hindi', inline: true },
-              { name: '📅 Account Created', value: `<t:${Math.floor(fullUser.createdTimestamp / 1000)}:R>`, inline: true },
+              { name: 'Handle', value: `\`${fullUser.tag}\``, inline: true },
+              { name: 'Vibe', value: `**${complimentWord.toUpperCase()}**`, inline: true },
+              { name: 'Bot?', value: fullUser.bot ? 'Oo' : 'Hindi', inline: true },
+              { name: 'User ID', value: `\`${fullUser.id}\``, inline: false },
+              { name: 'Account Created', value: `<t:${Math.floor(fullUser.createdTimestamp / 1000)}:F>\n(<t:${Math.floor(fullUser.createdTimestamp / 1000)}:R>)`, inline: false },
             );
 
           if (banner) {
@@ -1998,37 +2010,41 @@ const {
               .slice(0, 15)
               .join(', ') || 'Wala';
             const nickname = member.nickname || 'Wala';
+            const joinedTs = Math.floor(member.joinedTimestamp / 1000);
             const boosting = member.premiumSince ? `<t:${Math.floor(member.premiumSinceTimestamp / 1000)}:R>` : 'Hindi nag-boost';
 
             embed.addFields(
-              { name: '\u200B', value: '**── SERVER PROFILE ──**', inline: false },
-              { name: '📛 Nickname', value: nickname, inline: true },
-              { name: '📅 Joined Server', value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`, inline: true },
-              { name: '💎 Boosting', value: boosting, inline: true },
-              { name: `🎭 Roles (${member.roles.cache.size - 1})`, value: roles, inline: false },
+              { name: '-------- SERVER PROFILE --------', value: '\u200B', inline: false },
+              { name: 'Nickname', value: nickname, inline: true },
+              { name: 'Joined Server', value: `<t:${joinedTs}:F>\n(<t:${joinedTs}:R>)`, inline: true },
+              { name: 'Boosting', value: boosting, inline: true },
+              { name: `Roles (${member.roles.cache.size - 1})`, value: roles, inline: false },
             );
 
             // If server avatar is different from main avatar, show it
             if (serverAvatar !== mainAvatar) {
               embed.setThumbnail(serverAvatar);
-              embed.addFields({ name: '🖼️ Server Avatar', value: `[Link](${serverAvatar})`, inline: true });
-              embed.addFields({ name: '🖼️ Main Avatar', value: `[Link](${mainAvatar})`, inline: true });
+              embed.addFields({ name: 'Server Avatar', value: `[Open HD](${serverAvatar})`, inline: true });
+              embed.addFields({ name: 'Main Avatar', value: `[Open HD](${mainAvatar})`, inline: true });
             }
           }
 
-          embed.setFooter({ text: `Requested by ${message.author.tag}`, iconURL: message.author.displayAvatarURL() });
+          embed.setFooter({ text: `Requested by ${message.author.tag} • j!view`, iconURL: message.author.displayAvatarURL() });
           embed.setTimestamp();
 
-          const viewRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Avatar HD').setURL(mainAvatar),
-            ...(banner ? [new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Banner HD').setURL(banner)] : [])
-          );
+          const viewButtons = [
+            new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Avatar HD').setURL(mainAvatar)
+          ];
+          if (banner) {
+            viewButtons.push(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Banner HD').setURL(banner));
+          }
 
+          const viewRow = new ActionRowBuilder().addComponents(...viewButtons);
           await message.reply({ embeds: [embed], components: [viewRow] });
           return;
         }
 
-        // j!chat — owner only. Mirrors g!g from gnslgbot2.
+        // j!chat â€” owner only. Mirrors g!g from gnslgbot2.
         // j!chat <channel_id or message_id> <text>
         if (command === 'chat') {
           const OWNERS = ['1477683173520572568', '705770837399306332'];
@@ -2069,9 +2085,9 @@ const {
           if (targetChannel) {
             try {
               await targetChannel.send(customMessage);
-              await authorUser.send(`✅ Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
+              await authorUser.send(`âœ… Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
             } catch (e) {
-              try { await authorUser.send(`❌ Failed to send: ${e.message}`); } catch { }
+              try { await authorUser.send(`âŒ Failed to send: ${e.message}`); } catch { }
             }
             return;
           }
@@ -2093,50 +2109,50 @@ const {
           if (targetMessage) {
             try {
               await targetMessage.reply(customMessage);
-              await authorUser.send(`✅ Replied in #${targetMessage.channel.name}.`);
+              await authorUser.send(`âœ… Replied in #${targetMessage.channel.name}.`);
             } catch (e) {
-              try { await authorUser.send(`❌ Failed to reply: ${e.message}`); } catch { }
+              try { await authorUser.send(`âŒ Failed to reply: ${e.message}`); } catch { }
             }
             return;
           }
 
           // 3. Fallback: ID not found
           try {
-            await authorUser.send(`❌ j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
+            await authorUser.send(`âŒ j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
           } catch { }
           return;
         }
 
-        // j!whoami — Verify user ID for permissions
+        // j!whoami â€” Verify user ID for permissions
         if (command === 'whoami' || command === 'myid') {
           const owners = ['1477683173520572568', '705770837399306332'];
           const isOwner = owners.includes(message.author.id);
           const idEmbed = new EmbedBuilder()
-            .setTitle('🆔 Identity Check')
-            .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? '✅ You are an **Authorized Owner**.' : '❌ You are not in the owner whitelist.'}`)
+            .setTitle('ðŸ†” Identity Check')
+            .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? 'âœ… You are an **Authorized Owner**.' : 'âŒ You are not in the owner whitelist.'}`)
             .setColor(isOwner ? 0x00ff00 : 0xff0000);
           await message.reply({ embeds: [idEmbed] });
           return;
         }
 
-        // j!ping — Bot status check
+        // j!ping â€” Bot status check
         if (command === 'ping') {
-          await message.reply(`Pong! 🏓 Latency is ${Math.round(client.ws.ping)}ms.`);
+          await message.reply(`Pong! ðŸ“ Latency is ${Math.round(client.ws.ping)}ms.`);
           return;
         }
 
-        // j!admin — show admin command list
+        // j!admin â€” show admin command list
         if (command === 'admin' || command === 'commandslist') {
           const adminEmbed = new EmbedBuilder()
-            .setTitle('🛡️ JanJan Admin Panel 🛡️')
+            .setTitle('ðŸ›¡ï¸ JanJan Admin Panel ðŸ›¡ï¸')
             .setDescription('**Exclusive commands para sa mga diyosa ng server:**\n\n' +
-              '• `j!status <note>` - Set bot bubble status (Admin only)\n' +
-              '• `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
-              '• `j!test` - Trigger mapang-lait greeting/roast\n' +
-              '• `j!vc <text>` - Male TTS in voice channel\n' +
-              '• `j!ask <question>` - Voice-only AI response\n' +
-              '• `j!autotts` - Toggle Auto TTS in channel\n' +
-              '• `j!join` / `j!leave` - Reset voice connection')
+              'â€¢ `j!status <note>` - Set bot bubble status (Admin only)\n' +
+              'â€¢ `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
+              'â€¢ `j!test` - Trigger mapang-lait greeting/roast\n' +
+              'â€¢ `j!vc <text>` - Male TTS in voice channel\n' +
+              'â€¢ `j!ask <question>` - Voice-only AI response\n' +
+              'â€¢ `j!autotts` - Toggle Auto TTS in channel\n' +
+              'â€¢ `j!join` / `j!leave` - Reset voice connection')
             .setColor(0xff0000)
             .setFooter({ text: 'JanJan Bot | Created by drei' });
 
@@ -2178,7 +2194,7 @@ const {
           }
 
           const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
-          await message.reply({ content: `# ROAST TIME! 💅\n${mentions}\n\n${aiText}` });
+          await message.reply({ content: `# ROAST TIME! ðŸ’…\n${mentions}\n\n${aiText}` });
 
           // Speak the roast if in voice
           if (message.guild && getVoiceConnection(message.guild.id)) {
@@ -2192,9 +2208,9 @@ const {
         if (command === 'help') {
           const replyText =
             'Ghorl, eto ang menu ni JanJan:\n' +
-            '• `j!view @User` - Chika profile ng isang tao\n' +
-            '• `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
-            '• Mention/Reply - Mag-chikahan tayo!\n\n' +
+            'â€¢ `j!view @User` - Chika profile ng isang tao\n' +
+            'â€¢ `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
+            'â€¢ Mention/Reply - Mag-chikahan tayo!\n\n' +
             'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
           await message.reply(replyText);
           return;
@@ -2308,7 +2324,7 @@ const {
 
         await message.reply(safeReply);
 
-        // NOTE: For normal chat/mentions, we DO NOT auto‑TTS the reply anymore.
+        // NOTE: For normal chat/mentions, we DO NOT autoâ€‘TTS the reply anymore.
         // TTS is only triggered explicitly via j!vc / j!ask / j!test / voice events.
 
         // Save the bot's reply to DB so it remembers what it said
@@ -2334,7 +2350,7 @@ const {
   });
 
   // =====================================================================
-  // VOICE STATE UPDATE — AI-generated join/leave announcements
+  // VOICE STATE UPDATE â€” AI-generated join/leave announcements
   // Uses Groq AI to generate unique beki-style greetings and backstabs
   // Same vibe as gnslgbot2's on_voice_state_update
   // =====================================================================
@@ -2585,14 +2601,14 @@ const {
         const nowInChannel = newState.channelId;
 
         if (wasInChannel && !nowInChannel && savedVoiceState) {
-          // Bot was KICKED or DISCONNECTED from voice — rejoin immediately!
-          console.log(`[VOICE 24/7] 🚨 BOT WAS KICKED/DISCONNECTED! Rejoining in 3s...`);
+          // Bot was KICKED or DISCONNECTED from voice â€” rejoin immediately!
+          console.log(`[VOICE 24/7] ðŸš¨ BOT WAS KICKED/DISCONNECTED! Rejoining in 3s...`);
           scheduleVoiceRejoin('bot-kicked', 3000);
           return;
         }
 
         if (wasInChannel && nowInChannel && wasInChannel !== nowInChannel && savedVoiceState) {
-          // Bot was MOVED to another channel — update saved state and stay
+          // Bot was MOVED to another channel â€” update saved state and stay
           console.log(`[VOICE 24/7] Bot was moved to channel ${nowInChannel}. Updating saved state.`);
           setSavedVoiceState({ guildId, channelId: nowInChannel });
           await saveVoiceStateToDB(guildId, nowInChannel);
@@ -2645,6 +2661,7 @@ const {
   });
 
 })(); // End of async IIFE
+
 
 
 
