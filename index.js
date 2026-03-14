@@ -1584,6 +1584,51 @@ const {
     return out;
   }
 
+  function detectLanguageMixMode(text = '') {
+    const input = String(text || '').toLowerCase();
+    if (!input.trim()) return 'mixed';
+
+    const tagalogHints = [
+      'ako', 'ikaw', 'siya', 'kami', 'tayo', 'kayo', 'nila', 'natin', 'naman', 'kasi', 'lang',
+      'dito', 'dyan', 'iyan', 'yan', 'ano', 'paano', 'bakit', 'saan', 'kailan', 'hindi', 'oo',
+      'wala', 'meron', 'gusto', 'pwede', 'teh', 'beh', 'mhie', 'sige', 'ayos', 'kamusta', 'kumusta'
+    ];
+    const englishHints = [
+      'what', 'why', 'where', 'when', 'how', 'can', 'could', 'should', 'will', 'would', 'is', 'are',
+      'do', 'does', 'did', 'please', 'latest', 'update', 'build', 'error', 'fix', 'code', 'research',
+      'news', 'price', 'today', 'now'
+    ];
+
+    const words = input.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+    if (words.length === 0) return 'mixed';
+
+    let t = 0;
+    let e = 0;
+    for (const w of words) {
+      if (tagalogHints.includes(w)) t++;
+      if (englishHints.includes(w)) e++;
+    }
+
+    if (t >= e * 1.7 && t >= 2) return 'tagalog';
+    if (e >= t * 1.7 && e >= 2) return 'english';
+    return 'mixed';
+  }
+
+  function buildLanguageStylePrompt(userText = '') {
+    const mode = detectLanguageMixMode(userText);
+    if (/\b(english only|speak english|in english|english mode)\b/i.test(String(userText || ''))) {
+      return 'Language mode override: English output requested explicitly by user. Use clear conversational English.';
+    }
+    // Default preference from user: kahit English input, Tagalog/Taglish output pa rin.
+    if (mode === 'english') {
+      return 'Language mode: User may type in English, but reply in Tagalog/Taglish for clarity. Keep wording natural and easy to understand.';
+    }
+    if (mode === 'tagalog') {
+      return 'Language mode: Tagalog-first with light natural English terms only when useful. Avoid literal/awkward translations.';
+    }
+    return 'Language mode: Taglish mixed, mirror user code-switch naturally. Keep switching smooth and minimal, no slang dump.';
+  }
+
   function escapeRegex(text = '') {
     return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -2560,6 +2605,7 @@ const {
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
+    const languageStylePrompt = buildLanguageStylePrompt(userMessage);
     let behaviorPrompt = '';
 
     // Special personas based on who is talking
@@ -2622,6 +2668,8 @@ const {
         ' Current input is flirty. Match with playful/flirty teasing tone (Taglish), confident and witty, ' +
         'but keep it non-explicit and concise.';
     }
+
+    behaviorPrompt += ` ${languageStylePrompt}`;
 
     // Voice context - BE EXTREMELY AWARE OF THIS
     const voiceContext = voiceMembers.length > 0
