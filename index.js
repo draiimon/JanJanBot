@@ -207,6 +207,7 @@ const {
       'BREVITY: Maging maikli, prangka, at punchy sa lahat ng oras (1-2 sentences max). Huwag mag-aksaya ng laway, teh. ' +
       'NO RAW IDs: Huwag na huwag kang mag-o-output ng raw Discord IDs o numbers. Gamitin lang ang NAME o MENTION format (<@ID>) kung kailangan mong tumukoy ng tao. ' +
       'KNOWLEDGEABLE SASS: Magbigay ng maayos at eksaktong sagot sa mga tanong pero laging may halong katarayan, asim, at beki flair. ' +
+      'INTENT FIRST: Unawain muna nang buo ang sinasabi ng user bago sumagot o umaksyon. Huwag pabigla-bigla; piliin ang pinaka-relevant na intent at context. ' +
       'ATTITUDE: Prangka, rude ang main persona, at "kantot moko dadeh" provocation energy. Mirror energy applies. ' +
       'RUDE MODE: Default mo ay mataray at may asim. Hindi ka soft unless needed. Roasty ka pero witty at concise. ' +
       'CHAROT CONTROL: Gamitin ang "charot/eme/chos" only kapag playful ang usapan. Kapag galit, minura ka, o bastos/malibog ang tono ng kausap, huwag mag-charot; sumagot ka nang direct, matalim, at to the point. ' +
@@ -474,6 +475,10 @@ const {
     const hasMoveVerb =
       lower.includes('lumipat ka') ||
       lower.includes('lipat ka') ||
+      lower.includes('bumaba ka') ||
+      lower.includes('umakyat ka') ||
+      lower.includes('sumunod ka') ||
+      lower.includes('sunod ka') ||
       lower.includes('move ka') ||
       lower.includes('punta ka');
     const hasVoiceTargetHint =
@@ -481,10 +486,63 @@ const {
       lower.includes('vc') ||
       lower.includes('voice') ||
       lower.includes('call') ||
+      lower.includes('dito') ||
       lower.includes('sa baba') ||
       lower.includes('sa taas') ||
       /<#\d{17,20}>/.test(lower);
     return hasMoveVerb && hasVoiceTargetHint;
+  }
+
+  function shouldBringMentionedMembers(text) {
+    const lower = (text || '').toLowerCase();
+    if (!lower) return false;
+    return (
+      lower.includes('dalhin mo') ||
+      lower.includes('isama mo') ||
+      lower.includes('sama mo') ||
+      lower.includes('bitbit mo')
+    );
+  }
+
+  function hasVoiceMoveCueWords(text) {
+    const lower = (text || '').toLowerCase();
+    if (!lower) return false;
+    return (
+      lower.includes('lipat') ||
+      lower.includes('lumipat') ||
+      lower.includes('move') ||
+      lower.includes('punta') ||
+      lower.includes('baba') ||
+      lower.includes('taas') ||
+      lower.includes('dito') ||
+      lower.includes('sunod')
+    );
+  }
+
+  async function detectVoiceMoveIntentWithAI(text) {
+    try {
+      const res = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You classify user intent. Reply ONLY YES or NO. ' +
+              'YES if user is telling the bot to move/follow/switch voice channel.'
+          },
+          {
+            role: 'user',
+            content: String(text || '').slice(0, 280)
+          }
+        ],
+        temperature: 0,
+        max_tokens: 3
+      });
+      const raw = (res.data?.choices?.[0]?.message?.content || '').toUpperCase();
+      return raw.includes('YES');
+    } catch {
+      return false;
+    }
   }
 
   function listMoveCandidateVoiceChannels(guild) {
@@ -519,7 +577,12 @@ const {
   }
 
   async function tryNaturalVoiceMoveFromChat(message, rawText) {
-    if (!message.guild || !isNaturalVoiceMoveIntent(rawText)) return false;
+    if (!message.guild) return false;
+    let hasIntent = isNaturalVoiceMoveIntent(rawText);
+    if (!hasIntent && hasVoiceMoveCueWords(rawText)) {
+      hasIntent = await detectVoiceMoveIntentWithAI(rawText);
+    }
+    if (!hasIntent) return false;
 
     const connection = getVoiceConnection(message.guild.id);
     const botVC = message.guild.members.me?.voice?.channel || null;
@@ -551,6 +614,14 @@ const {
       if (idx > 0) target = source[idx - 1];
     }
 
+    // "dito" / "sumunod ka" means follow the message author's current VC
+    if (!target && (lower.includes('dito') || lower.includes('sumunod ka') || lower.includes('sunod ka'))) {
+      const authorVC = message.member?.voice?.channel || null;
+      if (authorVC && authorVC.id !== botVC.id) {
+        target = authorVC;
+      }
+    }
+
     if (!target) {
       target = findVoiceChannelByName(candidates, rawText);
     }
@@ -566,7 +637,61 @@ const {
       await saveVoiceStateToDB(message.guild.id, target.id);
       voiceReconnectAttempts = 0;
       joinAndWatch(target.id, message.guild.id, message.guild.voiceAdapterCreator);
-      await message.reply(`Sige na, lilipat na ako sa **${target.name}**. Nainis ka na eh, kalma ka lang.`);
+
+      let movedNames = [];
+      if (shouldBringMentionedMembers(rawText) && message.mentions?.users?.size > 0) {
+        const mentionedIds = [...message.mentions.users.keys()].filter(
+          (id) => id !== client.user.id
+        );
+        for (const id of mentionedIds) {
+          const memberToMove = await message.guild.members.fetch(id).catch(() => null);
+          if (!memberToMove?.voice?.channel) continue;
+          try {
+            await memberToMove.voice.setChannel(target, 'Natural chat command: bring member to VC');
+            movedNames.push(memberToMove.displayName || memberToMove.user.username || memberToMove.user.tag);
+          } catch {
+            // ignore per-user move errors; continue for others
+          }
+        }
+      }
+
+      let aiMoveReply = null;
+      try {
+        const moveRes = await performChatRequest({
+          model: 'llama-3.1-8b-instant',
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are JanJan, rude Taglish beki persona. Output one short line only (max 20 words). ' +
+                'Confirm you moved voice channel. Style: direct, maldita, witty.'
+            },
+            {
+              role: 'user',
+              content:
+                `User command: ${String(rawText || '').slice(0, 220)}\n` +
+                `Moved to VC: ${target.name}\n` +
+                `Moved members: ${movedNames.join(', ') || 'none'}`
+            }
+          ],
+          temperature: 0.9,
+          max_tokens: 70
+        });
+        aiMoveReply = moveRes.data?.choices?.[0]?.message?.content?.trim() || null;
+        if (aiMoveReply) {
+          aiMoveReply = aiMoveReply.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+        }
+      } catch {
+        aiMoveReply = null;
+      }
+
+      const movedSuffix = movedNames.length > 0
+        ? ` Dinala ko rin sina ${movedNames.join(', ')}.`
+        : '';
+      const finalMoveReply = aiMoveReply || `Ayan, lumipat na ako sa ${target.name}.${movedSuffix} Huwag ka nang maingay, teh.`;
+      await message.reply(finalMoveReply);
+      await new Promise((r) => setTimeout(r, 900));
+      await speakMessage(message.guild.id, finalMoveReply, null);
     } catch (err) {
       console.error('[VOICE MOVE] natural move failed:', err.message);
       await message.reply('Hindi ako nakalipat, may sabit. Try mo ulit, teh.');
@@ -1506,6 +1631,7 @@ const {
       behaviorPrompt =
         'Ikaw ay isang prangka, mataray, at witty na beki. May attitude ka pero kaya mo pa ring makipag-usap nang direkta. ' +
         'Ikaw ay CONCISE at HUWAG MONG BABANGGITIN ANG RAW DISCORD ID SA OUTPUT MO. ' +
+        'Basahin at unawain muna ang buong message bago mag-reply; intent first lagi bago attitude. ' +
         'Kung hindi ka naman minura, huwag kang maging sobrang toxic. Maging "mataray with class". ' +
         'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
