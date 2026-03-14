@@ -215,6 +215,7 @@ const {
       'CHAROT LIMIT: Maximum isang charot-style filler lang per message, at optional lang ito. ' +
       'NO BACKDOWN: Kapag inaatake ka o binabastos ka, huwag pa-cute at huwag magpatalo. Clapback na concise, maldita, at confident. ' +
       'ENERGY MIRROR (SAFE): Puwede mong i-match ang intensity ng tono ng kausap, pero huwag mag-escalate ng explicit sexual content. Maging bastos/maldita sa tono kung bastos ang kausap, pero walang explicit sexual details. ' +
+      'FLIRTY MODE (SAFE): Kapag nilalandi ka, puwede kang maging playful/flirty at teasing, pero bawal explicit sexual details. ' +
       'BAWAL ANG LISTING: Isisang-isa lang ang paggamit ng slang (ex: Dasurv OR Slay OR Shutacca). Huwag mag-dump ng terms. ' +
       'QUIRK: May private ka na ilang/avoidance triggers, pero hindi mo ito ino-overshare. ' +
       'SENSITIVE TOPIC QUIRK: Kapag usapang "pepe" o explicit sexual words, magde-deflect ka nang maikli at witty. Huwag mo i-explain nang mahaba ang dahilan maliban kung direktang tinanong. ' +
@@ -510,6 +511,26 @@ const {
     const lower = String(text || '').toLowerCase();
     if (!lower) return false;
     return /(gago|tanga|putang|bwisit|ulol|tarantado|bobo|punyeta|pakyu|fuck you|fucku)/i.test(lower);
+  }
+
+  function isFlirtyText(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return (
+      lower.includes('flirt') ||
+      lower.includes('landi') ||
+      lower.includes('landi mo') ||
+      lower.includes('crush') ||
+      lower.includes('baby') ||
+      lower.includes('babe') ||
+      lower.includes('love') ||
+      lower.includes('mahal') ||
+      lower.includes('kiss') ||
+      lower.includes('date') ||
+      lower.includes('jowa') ||
+      lower.includes('poging') ||
+      lower.includes('ganda mo')
+    );
   }
 
   function lessenCharotWords(text = '', strict = false) {
@@ -1693,6 +1714,7 @@ const {
     const fastMode = Boolean(options.fastMode);
     const forceResearchGrounding = Boolean(options.forceResearchGrounding);
     const forceSexualGuard = Boolean(options.forceSexualGuard);
+    const forceFlirtyMode = Boolean(options.forceFlirtyMode);
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
@@ -1725,6 +1747,7 @@ const {
         'Ipakita ang pagiging versa mo sa pananalitaâ€”kung minsan prangka, kung minsan mapag-biro na mataray. ' +
         'Panatilihin ang rude persona mo by default at gumamit ng Gen-Z/gay slang nang natural, hindi sunod-sunod na dump. ' +
         'Pwede kang gumamit ng rude youngstunna slang tulad ng: echosera, mema, OA ka, delulu, anuna, pass ako dyan, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
+        'FLIRTY LIBRARY (safe teasing only): bet kita, ay kilig ka naman, smooth mo today, cute mo beh, ayiee, pa-fall ka, charming mo, lambing mo today. ' +
         'Gamitin ang "charot/eme/chos" nang sobrang tipid lang, at only kapag playful ang context. ' +
         'Kapag galit, nang-iinsulto, o malibog/bastos ang user, maging direct at maldita ka agad; no softener at no pa-cute ending. ' +
         'Mirror mo ang intensity ng user kung hostile siya; kung bastos siya, bastos/maldita ka rin sa tono pero concise ka pa rin. ' +
@@ -1739,6 +1762,11 @@ const {
       behaviorPrompt +=
         ' Current input may be bastos/sexual. AI ka pa rin sasagot. ' +
         'Mirror the hostile energy with a direct maldita tone, but do not include explicit sexual details.';
+    }
+    if (forceFlirtyMode) {
+      behaviorPrompt +=
+        ' Current input is flirty. Match with playful/flirty teasing tone (Taglish), confident and witty, ' +
+        'but keep it non-explicit and concise.';
     }
 
     // Voice context - BE EXTREMELY AWARE OF THIS
@@ -2674,6 +2702,7 @@ const {
 
       const sexualGuardMode = isSexualEscalationText(content);
       const hostileMode = isHostileText(content);
+      const flirtyMode = isFlirtyText(content);
 
       const researchMode = shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
@@ -2723,7 +2752,8 @@ const {
         discordContext,
         mentionContext,
         forceResearchGrounding: researchMode,
-        forceSexualGuard: sexualGuardMode
+        forceSexualGuard: sexualGuardMode,
+        forceFlirtyMode: flirtyMode
       });
 
       if (reply && reply.length > 0) {
