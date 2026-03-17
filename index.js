@@ -2496,6 +2496,78 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!usersummary @user — summarize a person from DB (facts + recent messages)
+        if (command === 'usersummary' || command === 'usersum' || command === 'summaryuser') {
+          if (!message.guild) {
+            await message.reply('Teh, sa server lang to. Mention mo yung tao dito.');
+            return;
+          }
+
+          const targetUser =
+            message.mentions.users.first() ||
+            (args[0] ? await client.users.fetch(args[0]).catch(() => null) : null);
+
+          if (!targetUser) {
+            await message.reply('Sino yun? Mention mo: `j!usersummary @user`');
+            return;
+          }
+
+          // Pull stored facts + some recent messages authored by the target in this channel
+          let facts = '';
+          let recentLines = [];
+          try {
+            const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [targetUser.id]);
+            facts = factsRes.rows?.[0]?.facts || '';
+          } catch { }
+          try {
+            const msgRes = await pool.query(
+              'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 20',
+              [message.channel.id, targetUser.id]
+            );
+            recentLines = (msgRes.rows || [])
+              .reverse()
+              .map((r) => {
+                const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
+                const who = r.author_tag || (targetUser.globalName || targetUser.username || 'someone');
+                const msg = (r.content || '').replace(/\s+/g, ' ').trim();
+                if (!msg) return null;
+                return `[${ts}] ${who}: ${msg}`;
+              })
+              .filter(Boolean);
+          } catch { }
+
+          const displayName =
+            message.guild.members.cache.get(targetUser.id)?.displayName ||
+            targetUser.globalName ||
+            targetUser.username ||
+            targetUser.tag;
+
+          const prompt =
+            `Summarize this person based ONLY on stored DB info below. ` +
+            `Do not output raw Discord IDs. Use nickname/name only. ` +
+            `Output: (1) 5-8 bullets: personality/vibe/typical topics, (2) 1 short paragraph "how to talk to them", (3) any notable facts with uncertainty labels if weak. ` +
+            `If DB info is thin, say "kulang pa info" and list what you do know.\n\n` +
+            `[TARGET]: ${displayName}\n` +
+            `[USER FACTS FROM DB]: ${facts || '(none)'}\n` +
+            `[RECENT MESSAGES FROM THIS CHANNEL]:\n${recentLines.join('\n') || '(none)'}\n`;
+
+          await message.channel.sendTyping();
+          const voiceMembers = [];
+          const discordContext = await buildDiscordAwarenessContext(message, false);
+          const mentionContext = buildMentionContext(message);
+          const summary = await callGroqChat(prompt, targetUser.id, message.channel.id, voiceMembers, {
+            fastMode: false,
+            researchContext: [],
+            discordContext,
+            mentionContext,
+            forceResearchGrounding: false,
+            forceSexualGuard: false
+          });
+
+          await message.reply(summary || 'Teh, wala akong ma-summarize. Kulang pa DB info.');
+          return;
+        }
+
         // j!admin â€” show admin command list
         if (command === 'admin' || command === 'commandslist') {
           const adminEmbed = new EmbedBuilder()
@@ -2566,6 +2638,7 @@ if (authorId === '669047995009859604') {
             '- `j!view @User` - Chika profile ng isang tao\n' +
             '- `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
             '- `j!permcheck` - Check permissions sa channel (Admin only)\n' +
+            '- `j!usersummary @User` - Summary ng tao based sa DB\n' +
             '- Mention/Reply - Mag-chikahan tayo!\n\n' +
             'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
           await message.reply(replyText);
@@ -2668,6 +2741,42 @@ if (authorId === '669047995009859604') {
 
       if (!content) {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
+      }
+
+      // Explicit summarize requests: pull recent channel messages with timestamps.
+      // This prevents JanJan from being dismissive and forces a real summary grounded in backread.
+      const summarizeMatch = content.match(/summarize\s+chat\s+from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})/i);
+      if (summarizeMatch && message.channel?.id) {
+        const fromTime = summarizeMatch[1];
+        const toTime = summarizeMatch[2];
+        try {
+          const rowsRes = await pool.query(
+            'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 120',
+            [message.channel.id]
+          );
+          const rows = (rowsRes.rows || []).reverse();
+          const lines = rows
+            .map((r) => {
+              const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
+              const who = r.author_tag || 'someone';
+              const msg = (r.content || '').replace(/\s+/g, ' ').trim();
+              if (!msg) return null;
+              return `[${ts}] ${who}: ${msg}`;
+            })
+            .filter(Boolean)
+            .slice(-90);
+
+          const summaryContext =
+            `\n\n[SUMMARY REQUEST]: Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
+            `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
+            `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
+            `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n` +
+            `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`;
+
+          content = `${content}${summaryContext}`;
+        } catch (e) {
+          // If DB fails, still proceed with normal chat (model will rely on its history context)
+        }
       }
 
       // Light persona reaction for mentions/replies (no spam)
