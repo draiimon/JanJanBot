@@ -2718,14 +2718,17 @@ if (authorId === '669047995009859604') {
           return;
         }
 
-        // j!summarize / j!backread — Summarize chat by time window (DB-grounded)
-        // Usage: j!summarize 18:29 19:33
+        // j!summarize / j!backread — Summarize chat (DB-grounded)
+        // Usage:
+        //   j!summarize              -> last 10 messages (quick)
+        //   j!summarize 18:29 19:33  -> time window
         if (command === 'summarize' || command === 'backread' || command === 'sumchat') {
           const fromTime = (args[0] || '').trim();
           const toTime = (args[1] || '').trim();
-          const timeOk = /^\d{1,2}:\d{2}$/.test(fromTime) && /^\d{1,2}:\d{2}$/.test(toTime);
+          const hasWindow = Boolean(fromTime) || Boolean(toTime);
+          const timeOk = !hasWindow || (/^\d{1,2}:\d{2}$/.test(fromTime) && /^\d{1,2}:\d{2}$/.test(toTime));
           if (!timeOk) {
-            await message.reply('Format: `j!summarize 18:29 19:33`');
+            await message.reply('Format: `j!summarize` or `j!summarize 18:29 19:33`');
             return;
           }
 
@@ -2736,6 +2739,7 @@ if (authorId === '669047995009859604') {
               [message.channel.id]
             );
             const rows = (rowsRes.rows || []).reverse();
+            const limit = hasWindow ? 120 : 10;
             const lines = rows
               .map((r) => {
                 const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
@@ -2745,14 +2749,22 @@ if (authorId === '669047995009859604') {
                 return `[${ts}] ${who}: ${msg}`;
               })
               .filter(Boolean)
-              .slice(-120);
+              .slice(-limit);
 
-            const prompt =
-              `Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
-              `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
-              `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
-              `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n\n` +
-              `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`;
+            const prompt = hasWindow
+              ? (
+                `Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
+                `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
+                `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
+                `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n\n` +
+                `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`
+              )
+              : (
+                `Summarize the LAST 10 messages in THIS CHANNEL (quick backread). ` +
+                `Output: 3-6 bullets + 1 short recap line. ` +
+                `Keep it concise.\n\n` +
+                `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`
+              );
 
             const discordContext = await buildDiscordAwarenessContext(message, false);
             const mentionContext = buildMentionContext(message);
@@ -2771,7 +2783,7 @@ if (authorId === '669047995009859604') {
               .setColor(0x7B61FF)
               .setTitle('🧠 BACKREAD SUMMARY')
               .setDescription(out)
-              .setFooter({ text: `Window: ${fromTime} → ${toTime} • #${message.channel.name}` })
+              .setFooter({ text: hasWindow ? `Window: ${fromTime} → ${toTime} • #${message.channel.name}` : `Quick: last 10 • #${message.channel.name}` })
               .setTimestamp();
             await message.reply({ embeds: [embed] });
           } catch (e) {
@@ -2855,12 +2867,12 @@ if (authorId === '669047995009859604') {
             .setThumbnail(client.user.displayAvatarURL({ dynamic: true }))
             .setDescription(
               '**quick start**\n' +
-              '- mention/reply sakin para mag-chika\n' +
+              '- mention/reply ka teh replyan kita!\n' +
               '- minsan sasabat ako kahit di ako tinatanong, pake mo ba?\n' +
               '- gusto mo tumigil ako sa epal? `j!tulog on`\n' +
               '\n' +
               '**notes**\n' +
-              '- summaries/backread = db-based (walang sources, walang web)\n' +
+              '- summarize/backread = based sa chat history (walang sources, walang web)\n' +
               '- i keep chat emojis near-zero; reactions ang expressive'
             )
             .addFields(
@@ -2871,17 +2883,18 @@ if (authorId === '669047995009859604') {
                   'j!view @User        - chika profile\n' +
                   'j!usersummary @User - summary ng tao (DB)\n' +
                   '```' +
-                  '**No command needed:** “kilala mo ba ko?” / “kilala mo ba si @X?” → DB-based reply',
+                  '**No command needed:** “kilala mo ba ko?” / “kilala mo ba si @X?” (based sa naaalala ko)',
                 inline: false
               },
               {
                 name: '🧠 SUMMARIZE / BACKREAD',
                 value:
                   '```' +
+                  'j!summarize\n' +
                   'j!summarize 18:29 19:33\n' +
                   'j!backread  18:29 19:33\n' +
                   '```' +
-                  'Bullets + short recap + unresolved questions (grounded sa DB backread).',
+                  'Bullets + short recap + unresolved questions (based sa backread).',
                 inline: false
               },
               {
