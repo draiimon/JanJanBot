@@ -343,6 +343,56 @@ const {
     return researchKeywords.some((keyword) => lower.includes(keyword));
   }
 
+  async function extractAndStoreUserFacts({ userId, displayName, messageText }) {
+    if (!userId || !messageText) return;
+    const cleaned = String(messageText).replace(/\s+/g, ' ').trim();
+    if (!cleaned || cleaned.length < 3) return;
+
+    // Lightweight fact extraction (keeps DB populated so "kilala mo ba" works)
+    try {
+      const res = await performChatRequest({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Extract 1-2 short stable user facts from the message for memory. ' +
+              'Rules: no raw Discord IDs, no sexual details, no private/sensitive guesses. ' +
+              'If nothing stable, output NONE. ' +
+              'Format exactly: FACTS: fact1 | fact2'
+          },
+          {
+            role: 'user',
+            content: `Name: ${displayName || 'user'}\nMessage: ${cleaned}`
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 80
+      });
+
+      const text = res.data?.choices?.[0]?.message?.content || '';
+      const m = text.match(/FACTS:\s*(.*)/i);
+      const factsRaw = (m ? m[1] : '').trim();
+      if (!factsRaw || /^none\b/i.test(factsRaw)) return;
+
+      const safeFacts = factsRaw
+        .replace(/\d{17,20}/g, '') // avoid IDs
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (!safeFacts) return;
+
+      const oldRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
+      const oldFacts = oldRes.rows?.[0]?.facts || '';
+      const combined = oldFacts ? `${oldFacts} | ${safeFacts}` : safeFacts;
+
+      await pool.query(
+        'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+          'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+        [userId, combined.slice(-1500)]
+      );
+    } catch { }
+  }
+
   const sexualEscalationKeywords = [
     'kantot', 'kantutan', 'sex', 'sexy', 'jakol', 'jabol', 'bj', 'blowjob', 'deepthroat',
     'tite', 'tt', 'dede', 'suso', 'pepe', 'pwet', 'chupa', 'chupain', 'fubu', 'nudes', 'nude',
@@ -1046,7 +1096,84 @@ const {
             console.error('[DB] STT user message save error:', dbErr.message);
           }
 
-          const researchMode = shouldUseResearchMode(transcript);
+          // Store user facts from voice too
+          await extractAndStoreUserFacts({
+            userId: String(targetUserId),
+            displayName: speakerName,
+            messageText: transcript
+          });
+
+          // Apply same "kilala mo ba..." + "ano na napag-usapan natin" behaviors in voice
+          let effectivePrompt = transcript;
+          const lowerT = transcript.toLowerCase();
+          const isWhoAmIPrompt =
+            /\b(kilala\s+mo\s+ba\s+ko|kilala\s+mo\s+ba\s+ako|do\s+you\s+know\s+me|who\s+am\s+i)\b/i.test(lowerT);
+          const isKnowTargetPrompt =
+            /\b(kilala\s+mo\s+ba\s+(si|ito|to)|kilala\s+mo\s+ba\s+yan|do\s+you\s+know\s+him|do\s+you\s+know\s+her|do\s+you\s+know\s+this)\b/i
+              .test(lowerT);
+          const isPersonMemoryRequest = Boolean(isWhoAmIPrompt || isKnowTargetPrompt);
+          const isWhatWeTalkedAbout =
+            /\b(ano\s+na\s+napag[\s-]*usapan\s+natin|ano\s+napag[\s-]*usapan|napag[\s-]*usapan\s+natin|what\s+did\s+we\s+talk\s+about)\b/i
+              .test(lowerT);
+
+          if ((isPersonMemoryRequest || isWhatWeTalkedAbout) && guildId) {
+            try {
+              // Pull speaker facts + recent messages across server for better recall
+              const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [String(targetUserId)]);
+              const facts = factsRes.rows?.[0]?.facts || '';
+              const msgRes = await pool.query(
+                'SELECT channel_id, author_tag, content, created_at FROM messages WHERE guild_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 35',
+                [guildId, String(targetUserId)]
+              );
+              const recentLines = (msgRes.rows || [])
+                .reverse()
+                .map((r) => {
+                  const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
+                  const who = r.author_tag || speakerName || 'someone';
+                  const msg = (r.content || '').replace(/\s+/g, ' ').trim();
+                  if (!msg) return null;
+                  const where = r.channel_id ? ` (ch:${r.channel_id})` : '';
+                  return `[${ts}] ${who}${where}: ${msg}`;
+                })
+                .filter(Boolean);
+
+              const memoryBlock =
+                `\n\n[VOICE MEMORY MODE]: Stay JanJan persona (bading/maldita Taglish). No sources. No web. ` +
+                `Do NOT output raw Discord IDs.\n` +
+                `[SPEAKER FACTS]: ${facts || '(none)'}\n` +
+                `[SPEAKER RECENT MESSAGES ACROSS SERVER]:\n${recentLines.join('\n') || '(none)'}\n`;
+
+              if (isPersonMemoryRequest) {
+                effectivePrompt = `${transcript}${memoryBlock}`;
+              } else if (isWhatWeTalkedAbout) {
+                // Quick backread: last 10 messages in the relay text channel
+                const recentChanRes = await pool.query(
+                  'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 12',
+                  [textChannel?.id || 'voice']
+                );
+                const rows = (recentChanRes.rows || []).reverse();
+                const lines = rows
+                  .map((r) => {
+                    const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
+                    const who = r.author_tag || 'someone';
+                    const msg = (r.content || '').replace(/\s+/g, ' ').trim();
+                    if (!msg) return null;
+                    return `[${ts}] ${who}: ${msg}`;
+                  })
+                  .filter(Boolean)
+                  .slice(-10);
+                effectivePrompt =
+                  `${transcript}\n\n[QUICK BACKREAD]: Summarize the last 10 messages (chika bullets + 1 line). ` +
+                  `Stay JanJan persona. No Recap labels.\n` +
+                  `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n` +
+                  memoryBlock;
+              }
+            } catch { }
+          }
+
+          // Disable research for voice person-memory/backread requests
+          const isBackreadLike = isPersonMemoryRequest || isWhatWeTalkedAbout;
+          const researchMode = isBackreadLike ? false : shouldUseResearchMode(transcript);
           const tavilyResults = researchMode ? await searchWithTavily(transcript, 3) : [];
 
           let aiReply = 'Hindi ko nasagot, ghorl.';
@@ -1066,7 +1193,7 @@ const {
               'Rule: Treat STT interaction as normal chat memory.';
 
             aiReply = await callGroqChat(
-              transcript,
+              effectivePrompt,
               String(targetUserId),
               textChannel?.id || null,
               voiceMembers,
@@ -1958,55 +2085,7 @@ if (authorId === '669047995009859604') {
         await message.react(emoji).catch(() => { });
       }
 
-      async function extractAndStoreUserFacts({ userId, displayName, messageText }) {
-        if (!userId || !messageText) return;
-        const cleaned = String(messageText).replace(/\s+/g, ' ').trim();
-        if (!cleaned || cleaned.length < 3) return;
-
-        // Lightweight fact extraction (keeps DB populated so "kilala mo ba" works)
-        try {
-          const res = await performChatRequest({
-            model: 'llama-3.1-8b-instant',
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'Extract 1-2 short stable user facts from the message for memory. ' +
-                  'Rules: no raw Discord IDs, no sexual details, no private/sensitive guesses. ' +
-                  'If nothing stable, output NONE. ' +
-                  'Format exactly: FACTS: fact1 | fact2'
-              },
-              {
-                role: 'user',
-                content: `Name: ${displayName || 'user'}\nMessage: ${cleaned}`
-              }
-            ],
-            temperature: 0.2,
-            max_tokens: 80
-          });
-
-          const text = res.data?.choices?.[0]?.message?.content || '';
-          const m = text.match(/FACTS:\s*(.*)/i);
-          const factsRaw = (m ? m[1] : '').trim();
-          if (!factsRaw || /^none\b/i.test(factsRaw)) return;
-
-          const safeFacts = factsRaw
-            .replace(/\d{17,20}/g, '') // avoid IDs
-            .replace(/\s{2,}/g, ' ')
-            .trim();
-          if (!safeFacts) return;
-
-          const oldRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
-          const oldFacts = oldRes.rows?.[0]?.facts || '';
-          const combined = oldFacts ? `${oldFacts} | ${safeFacts}` : safeFacts;
-
-          await pool.query(
-            'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
-              'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
-            [userId, combined.slice(-1500)]
-          );
-        } catch { }
-      }
+      // (extractAndStoreUserFacts is defined globally)
 
       function keepChikaEmojisLight(text) {
         // Keep chat replies basically emoji-free.
