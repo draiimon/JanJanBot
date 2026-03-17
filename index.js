@@ -2866,14 +2866,10 @@ if (authorId === '669047995009859604') {
             })
             .setThumbnail(client.user.displayAvatarURL({ dynamic: true }))
             .setDescription(
-              '**quick start**\n' +
-              '- mention/reply ka teh replyan kita!\n' +
-              '- minsan sasabat ako kahit di ako tinatanong, pake mo ba?\n' +
-              '- gusto mo tumigil ako sa epal? `j!tulog on`\n' +
-              '\n' +
-              '**notes**\n' +
-              '- summarize/backread = based sa chat history (walang sources, walang web)\n' +
-              '- i keep chat emojis near-zero; reactions ang expressive'
+              '**about me**\n' +
+              '- mention/reply ka teh replyan kita\n' +
+              '- minsan sasabat ako kahit di ako tinatanong, pake mo ba\n' +
+              '- pag gusto mo tumigil ako: `j!tulog on`'
             )
             .addFields(
               {
