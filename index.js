@@ -3078,9 +3078,46 @@ if (authorId === '669047995009859604') {
         rawContent.trim().length < 4 ||
         /^[\p{Emoji}\s]+$/u.test(rawContent.trim());
 
+      // If user explicitly says the convo is still connected / they are still talking to JanJan,
+      // and JanJan was recently active in this channel, reply reliably (even without @ mention).
+      const connectedHint =
+        /\b(still\s+connected|context\s+is\s+still\s+connected|connected\s+pa(la)?|tuloy\s+pa|continu(e|ing)|same\s+topic|same\s+lang|usap\s+pa|kausap\s+ka\s+pa|talking\s+to\s+janjan|still\s+talking\s+to\s+janjan)\b/i
+          .test(rawContent || '');
+
+      let botRecentlyActive = false;
+      if (connectedHint && message.channel?.id) {
+        try {
+          const recentBotRes = await pool.query(
+            'SELECT COUNT(*) FROM messages WHERE channel_id = $1 AND author_id = $2 AND created_at > (NOW() - INTERVAL \'20 minutes\')',
+            [message.channel.id, client.user.id]
+          );
+          botRecentlyActive = parseInt(recentBotRes.rows?.[0]?.count || '0', 10) > 0;
+        } catch {
+          botRecentlyActive = false;
+        }
+      }
+
+      // If JanJan has been chatting recently in this channel, treat it as "chatbot convo mode"
+      // and be more epal (higher chance + shorter cooldown).
+      let botThreadActive = false;
+      if (!connectedHint && message.channel?.id) {
+        try {
+          const recentBotRes = await pool.query(
+            'SELECT COUNT(*) FROM messages WHERE channel_id = $1 AND author_id = $2 AND created_at > (NOW() - INTERVAL \'12 minutes\')',
+            [message.channel.id, client.user.id]
+          );
+          botThreadActive = parseInt(recentBotRes.rows?.[0]?.count || '0', 10) > 0;
+        } catch {
+          botThreadActive = false;
+        }
+      } else {
+        botThreadActive = botRecentlyActive;
+      }
+
       // "Epal mode": can auto-interject sometimes even without mention/keyword,
       // but stays rare + cooldown-protected to avoid spam.
-      const baseAutoChatChance = isPriorityChannel ? 0.75 : 0.5; // 50% base, higher in priority channels
+      const baseAutoChatChance =
+        botThreadActive ? 0.9 : (isPriorityChannel ? 0.75 : 0.5); // super epal when convo mode
       const autoChatChance = mentionsJanJanName ? 1.0 : baseAutoChatChance; // 100% when name is mentioned
       // Only "epal without mention" when it likely connects to an ongoing convo:
       // require recent activity in channel; name-mention bypasses this.
@@ -3101,10 +3138,10 @@ if (authorId === '669047995009859604') {
       const shouldAutoChat =
         !rawContent.startsWith(prefix) &&
         !looksLowSignal &&
-        autoChatEligible &&
-        (mentionsJanJanName || hasRecentBackreadContext) &&
+        (autoChatEligible || (connectedHint && botRecentlyActive) || botThreadActive) &&
+        (mentionsJanJanName || hasRecentBackreadContext || botThreadActive) &&
         !isSleepMode &&
-        Math.random() < autoChatChance;
+        (connectedHint && botRecentlyActive ? true : (Math.random() < autoChatChance));
 
       if (!isMention && !isReplyToBot && !shouldAutoChat) {
         // Auto TTS check
