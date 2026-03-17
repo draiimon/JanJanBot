@@ -3491,7 +3491,11 @@ if (authorId === '669047995009859604') {
 
       // Never use web research for backread/summarize or person-memory requests.
       // These must be grounded in channel history / stored memory only (no "Sources:" spam).
-      const researchMode = (isBackreadSummaryRequest || isPersonMemoryRequest) ? false : shouldUseResearchMode(content);
+      const allowResearchAndSources = (isMention || isReplyToBot) && !shouldAutoChat;
+      const researchMode =
+        allowResearchAndSources && !(isBackreadSummaryRequest || isPersonMemoryRequest)
+          ? shouldUseResearchMode(content)
+          : false;
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
       const discordContext = await buildDiscordAwarenessContext(message, fastMode);
       const mentionContext = buildMentionContext(message);
@@ -3557,10 +3561,10 @@ if (authorId === '669047995009859604') {
       });
 
       if (reply && reply.length > 0) {
-        const sourceLines = tavilyResults
+        const sourceLines = (allowResearchAndSources ? tavilyResults : [])
           .slice(0, 3)
           .map((r) => `- [${r.title}](${r.url})`);
-        const finalReply = sourceLines.length > 0
+        const finalReply = (allowResearchAndSources && sourceLines.length > 0)
           ? `${reply}\n\nSources:\n${sourceLines.join('\n')}`
           : reply;
         const safeReplyRaw = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
