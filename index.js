@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 
 const { loadConfig } = require('./src/config');
 const { createRuntimeState } = require('./src/runtime/state');
@@ -60,7 +60,7 @@ const {
   const aiChannelQueues = new Map();
   const aiChannelQueueDepths = new Map();
   const aiChannelLatestToken = new Map(); // channelId -> token (latest task only)
-  const autoChatCooldowns = new Map(); // channelId -> lastAutoChatMs
+  const autoChatCooldowns = new Map(); // scopeKey -> lastAutoChatMs (guild-wide; DM fallback)
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -2500,11 +2500,24 @@ if (authorId === '669047995009859604') {
         !/\bjanuary\b/i.test(lowerRaw);
 
       const nowMs = Date.now();
-      const lastAuto = autoChatCooldowns.get(message.channel.id) || 0;
+      const autoChatScopeKey = message.guild?.id ? `guild:${message.guild.id}` : `dm:${message.channel.id}`;
+      const lastAuto = autoChatCooldowns.get(autoChatScopeKey) || 0;
       const AUTO_CHAT_COOLDOWN_MS = 75 * 1000;
       const autoChatEligible = (nowMs - lastAuto) >= AUTO_CHAT_COOLDOWN_MS;
-      const autoChatChance = mentionsJanJanName ? 0.22 : 0.0; // only when name is mentioned
-      const shouldAutoChat = !rawContent.startsWith(prefix) && autoChatEligible && Math.random() < autoChatChance;
+      const looksLowSignal =
+        !rawContent ||
+        rawContent.trim().length < 4 ||
+        /^[\p{Emoji}\s]+$/u.test(rawContent.trim());
+
+      // "Epal mode": can auto-interject sometimes even without mention/keyword,
+      // but stays rare + cooldown-protected to avoid spam.
+      const baseAutoChatChance = 0.025; // ~2.5% when eligible
+      const autoChatChance = mentionsJanJanName ? 0.22 : baseAutoChatChance;
+      const shouldAutoChat =
+        !rawContent.startsWith(prefix) &&
+        !looksLowSignal &&
+        autoChatEligible &&
+        Math.random() < autoChatChance;
 
       if (!isMention && !isReplyToBot && !shouldAutoChat) {
         // Auto TTS check
@@ -2547,7 +2560,7 @@ if (authorId === '669047995009859604') {
       const mentionContext = buildMentionContext(message);
 
       if (shouldAutoChat) {
-        autoChatCooldowns.set(message.channel.id, nowMs);
+        autoChatCooldowns.set(autoChatScopeKey, nowMs);
         // Make it feel like she backread the convo before jumping in
         content =
           `AUTO-INTERACT MODE (NOT SPAM): You decided to join the conversation because your name was mentioned ("${rawContent}"). ` +
