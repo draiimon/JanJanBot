@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 
 const { loadConfig } = require('./src/config');
 const { createRuntimeState } = require('./src/runtime/state');
@@ -1408,13 +1408,9 @@ const {
         return cleaned;
       }
     } catch (err) {
-      console.warn('[GREET] AI generation failed, using fallback:', err.message);
+      console.warn('[GREET] AI generation failed, skipping greeting:', err.message);
     }
-
-    if (isMorning) {
-      return 'Gising na mga accla, wag puro tulog kung gusto niyo ng pera at chismis. Bangon, hilamos, tapos laban agad today.';
-    }
-    return '10PM na mga accla, pack up na at pahinga mode na bago kayo tuluyang magmukhang multo bukas. Save energy, tulog-tulog din.';
+    return '';
   }
 
   async function sendScheduledGreeting(type) {
@@ -1429,6 +1425,7 @@ const {
           ? members.map((m) => `<@${m.id}>`).join(' ')
           : 'Walang naka-online na ghorl ngayon.';
       const text = await generateScheduledGreetingText({ type, channel, members, now });
+      if (!text) return;
       lastGreetingTexts[type] = text;
 
       const header = type === 'morning'
@@ -1685,22 +1682,6 @@ const {
       { role: 'user', content: userMessage }
     ];
 
-    // Personalized fallback data
-    let identityName = authorId;
-    if (userFacts && userFacts.includes('|')) {
-      const factParts = userFacts.split('|');
-      identityName = factParts[0].replace('[MGA ALAM MO TUNGKOL SA KAUSAP MO]:', '').trim().split(' ')[0] || authorId;
-    }
-
-    const fallbackPhrases = [
-      `Ay naku ${identityName}, wag mo muna ako kausapin, haggard na ang utak ko sa inyo. Antibiotic ka muna!`,
-      `Wait lang ${identityName}, nagpapahinga ang beauty ko. Masyado kayong madaldal, naubusan ako ng energy!`,
-      `Luz Valdez muna ang lola mo. Try mo ulit mamaya kapag hindi na toxic ang system, ${identityName}!`,
-      `Hoy ${identityName}, stop muna. Masyado kayong papansin, na-drain ang utak ko. Shunga!`,
-      `Ay wait, nagpapa-lip filler lang ako. Balikan kita mamaya, ${identityName}!`,
-      `Busy ako ${identityName}, naglalaba ako ng panty. Mamaya na yang chismis mo!`
-    ];
-
     // Loop through Tiered Models
     for (let i = 0; i < models.length; i++) {
       const currentModel = models[i];
@@ -1753,9 +1734,8 @@ const {
       }
     }
 
-    // ABSOLUTE FALLBACK - If all models fail
-    const randomJanJan = fallbackPhrases[Math.floor(Math.random() * fallbackPhrases.length)];
-    return `${randomJanJan} (Note: Full system exhaustion ghorl, out of tokens!)`;
+    // No non-AI fallback: if Groq fails completely, return empty and skip replying.
+    return '';
   }
 
   /**
