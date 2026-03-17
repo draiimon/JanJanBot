@@ -3021,7 +3021,7 @@ if (authorId === '669047995009859604') {
                     '- No raw Discord IDs.\n' +
                     '- No sexual content.\n' +
                     '- leonardo_prompt_en must be ENGLISH, optimized, <= 280 chars.\n' +
-                    '- caption_tl + basehan_tl must be Tagalog/Taglish in JanJan persona (bading/maldita, witty) and COMPLETE.\n' +
+                    '- prompt_idea_tl, caption_tl, basehan_tl MUST be Tagalog/Taglish only (no English), JanJan persona (bading/maldita, witty), COMPLETE.\n' +
                     '- basehan_tl should say pano mo siya "nakilala": base sa stored memory + recent chat vibe.\n'
                 },
                 {
