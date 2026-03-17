@@ -390,6 +390,49 @@ const {
     throw new Error('Leonardo: generation timeout.');
   }
 
+  async function leonardoGenerateAndSend({ channel, replyToMessage, prompt }) {
+    if (!LEONARDO_API_KEY) throw new Error('LEONARDO_API_KEY missing.');
+    const safePrompt = String(prompt || '').trim();
+    if (!safePrompt) throw new Error('Missing prompt.');
+
+    // Loading/progress message (simple but clear)
+    const loadingBase = `wait ka lang ha, gumagawa na ko ng pic. wag kang atat.`;
+    const loadingMsg = await (replyToMessage?.reply
+      ? replyToMessage.reply(loadingBase)
+      : channel.send(loadingBase));
+
+    try {
+      await loadingMsg.edit(`${loadingBase}\nstatus: queue pa`);
+    } catch { }
+
+    const generationId = await leonardoCreateGeneration(safePrompt, { numImages: 1, width: 1024, height: 1024 });
+
+    try {
+      await loadingMsg.edit(`${loadingBase}\nstatus: ginuguhit ko na, kalma`);
+    } catch { }
+
+    const urls = await leonardoWaitForImages(generationId, { maxWaitMs: 120000, pollMs: 2500 });
+    const url = urls[0];
+    if (!url) throw new Error('No image URL returned.');
+
+    try {
+      await loadingMsg.edit(`${loadingBase}\nstatus: ina-upload ko na, saglit`);
+    } catch { }
+
+    const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
+    const buf = Buffer.from(imgRes.data);
+    const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
+
+    // Send final image message
+    await channel.send({
+      content: `eto na beh: **${safePrompt.slice(0, 140)}**`,
+      files: [file]
+    });
+
+    // Remove loading
+    try { await loadingMsg.delete(); } catch { }
+  }
+
   async function performChatRequest(payload, options = {}) {
     return performGroqRequest(payload);
   }
@@ -2871,21 +2914,8 @@ if (authorId === '669047995009859604') {
             return;
           }
 
-          await message.channel.sendTyping();
           try {
-            const generationId = await leonardoCreateGeneration(prompt, { numImages: 1, width: 1024, height: 1024 });
-            const urls = await leonardoWaitForImages(generationId, { maxWaitMs: 120000, pollMs: 2500 });
-            const url = urls[0];
-            if (!url) throw new Error('No image URL returned.');
-
-            const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
-            const buf = Buffer.from(imgRes.data);
-            const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
-
-            await message.reply({
-              content: `eto na beh: **${prompt.slice(0, 140)}**`,
-              files: [file]
-            });
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt });
           } catch (e) {
             await message.reply(`Teh, di ko magawa yung pic ngayon. ${e.message}`);
           }
@@ -3275,15 +3305,8 @@ if (authorId === '669047995009859604') {
       if (imgMatch && (isMention || isReplyToBot) && LEONARDO_API_KEY) {
         const prompt = (imgMatch[4] || '').trim();
         if (prompt.length >= 3) {
-          await message.channel.sendTyping();
           try {
-            const generationId = await leonardoCreateGeneration(prompt, { numImages: 1, width: 1024, height: 1024 });
-            const urls = await leonardoWaitForImages(generationId, { maxWaitMs: 120000, pollMs: 2500 });
-            const url = urls[0];
-            const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
-            const buf = Buffer.from(imgRes.data);
-            const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
-            await message.reply({ content: `ayan mhie: **${prompt.slice(0, 140)}**`, files: [file] });
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt });
           } catch (e) {
             await message.reply(`Teh, fail yung pic. ${e.message}`);
           }
