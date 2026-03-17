@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 
 const { loadConfig } = require('./src/config');
 const { createRuntimeState } = require('./src/runtime/state');
@@ -3134,6 +3134,14 @@ if (authorId === '669047995009859604') {
 
       if (!content) {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
+      }
+
+      // If user adds a meta-instruction like "reply okay if connected",
+      // treat it as a connectivity hint but still reply normally.
+      const okMetaPattern =
+        /(if you feel like[\s\S]*?connected[\s\S]*?reply\s+okay)|(reply\s+okay[\s\S]*?connected)|(connected\s*100%[\s\S]*?reply\s*okay)/i;
+      if (okMetaPattern.test(content)) {
+        content = content.replace(okMetaPattern, '').replace(/\s{2,}/g, ' ').trim() || content;
       }
 
       // Always store user facts on interaction so summaries work
