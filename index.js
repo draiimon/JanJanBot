@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 
 const { loadConfig } = require('./src/config');
 const { createRuntimeState } = require('./src/runtime/state');
@@ -1508,7 +1508,7 @@ const {
     runtimeState.discord.ready = true;
     runtimeState.discord.readyAt = new Date().toISOString();
     runtimeState.discord.lastLoginError = null;
-    await setBotCustomStatus('BADING KABA ? BAWAL ABDING DITO!');
+    await setBotCustomStatus('BADING KABA ? BAWAL BADING DITO!');
     startScheduledGreetings();
 
     // Permission diagnostics for priority auto-chat channels
