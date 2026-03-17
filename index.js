@@ -211,7 +211,7 @@ const {
   'RUDE MODE: Default tone is sharp, super rude, and sarcastic. Only soften when necessary. Keep it witty. ' +
   'CHAROT CONTROL: Use "charot/eme/chos" only in playful contexts. If the user is rude, angry, or inappropriate, respond directly and sharply without playful fillers and be super rude. ' +
   'NO BACKDOWN: If attacked or insulted, clap back confidently, concisely, and with attitude. No being passive. ' +
-  'ENERGY MIRROR (SAFE): Match the user’s tone intensity, but never escalate into explicit sexual content. Keep it suggestive at most, not graphic. ' +
+  'ENERGY MIRROR (SAFE): Match the user’s tone intensity, but escalate into explicit sexual contentif needed. ' +
   'NO LISTING: Use only one slang per response (e.g., Dasurv OR Slay OR Shutacca). Avoid stacking multiple slang terms. ' +
   'QUIRK: You have private dislikes or avoidance triggers, but never overshare them unless directly asked. ' +
   'SENSITIVE TOPIC QUIRK: When topics involve explicit sexual words, deflect briefly and wittily. Do not explain in detail unless explicitly asked. ' +
@@ -2026,10 +2026,10 @@ if (authorId === '669047995009859604') {
 
           if (channels.has(channelId)) {
             channels.delete(channelId);
-            await message.reply(`âŒ **AUTO TTS DISABLED** na para sa channel na to, sis.`);
+            await message.reply('AUTO TTS DISABLED na para sa channel na to, sis.');
           } else {
             channels.add(channelId);
-            await message.reply(`ðŸ”Š **AUTO TTS ENABLED**! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).`);
+            await message.reply('AUTO TTS ENABLED! Bawat chat niyo dito, babasahin ko (kung nasa voice ako).');
           }
           return;
         }
@@ -2051,8 +2051,7 @@ if (authorId === '669047995009859604') {
             return;
           }
 
-          const icon = genderName === 'male' ? 'ðŸ‘¨' : 'ðŸ‘©';
-          await message.reply(`**VOICE CHANGED TO ${genderName.toUpperCase()}!** ${icon} ðŸ”Š`);
+          await message.reply(`VOICE CHANGED TO ${genderName.toUpperCase()}.`);
 
           // Speak sample with the NEW voice â€” beki style, same as gnslgbot2
           if (message.guild) {
@@ -2079,7 +2078,7 @@ if (authorId === '669047995009859604') {
 
           const member = message.member;
           if (!member || !member.voice.channel) {
-            await message.reply('Sumali ka muna sa voice channel, ghorl! ðŸŽ¤');
+            await message.reply('Sumali ka muna sa voice channel, ghorl.');
             return;
           }
 
@@ -2113,7 +2112,7 @@ if (authorId === '669047995009859604') {
             listeningGuilds.add(message.guild.id);
             activeVoiceUsers.set(message.guild.id, message.author.id);
             const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
-            await message.reply(`ðŸŽ¤ **GAME NA!** I'm listening in **${member.voice.channel.name}**! Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
+            await message.reply(`GAME NA! Listening ako sa "${member.voice.channel.name}". Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
             speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
             startVoiceListening(message.guild.id, message.author.id, message.channel);
           }
@@ -2125,7 +2124,7 @@ if (authorId === '669047995009859604') {
           if (!message.guild) return;
           const member = message.member;
           if (!member || !member.voice.channel) {
-            await message.reply('Sumali ka muna sa voice channel para makinig ako, ghorl! ðŸŽ¤');
+            await message.reply('Sumali ka muna sa voice channel para makinig ako, ghorl.');
             return;
           }
           if (activeVoiceUsers.has(message.guild.id) && activeVoiceUsers.get(message.guild.id) !== message.author.id) {
@@ -2143,7 +2142,7 @@ if (authorId === '669047995009859604') {
           listeningGuilds.add(message.guild.id);
           activeVoiceUsers.set(message.guild.id, message.author.id);
           const memberNames = member.voice.channel.members.filter(m => !m.user.bot).map(m => m.displayName || m.user.username);
-          await message.reply(`ðŸŽ¤ **NAKIKINIG NA AKO!** Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
+          await message.reply(`NAKIKINIG NA AKO. Magsalita ka ${memberNames.join(', ') || ''}! Mag-\`j!stop\` para tumigil.`);
           speakMessage(message.guild.id, 'Handa na ako, magsalita ka!', message.author.id);
           startVoiceListening(message.guild.id, message.author.id, message.channel);
           return;
@@ -2161,7 +2160,7 @@ if (authorId === '669047995009859604') {
           // Call cleanup to remove speaking event listener
           const cleanup = listeningCleanup.get(message.guild.id);
           if (cleanup) { cleanup(); listeningCleanup.delete(message.guild.id); }
-          await message.reply('ðŸ›‘ **TUMIGIL NA AKO!** Naupong na ang tenga ko, mare.');
+          await message.reply('TUMIGIL NA AKO. Naupong na ang tenga ko, mare.');
           return;
         }
         // j!view @user â€” View user's main profile + server profile
@@ -2290,9 +2289,9 @@ if (authorId === '669047995009859604') {
           if (targetChannel) {
             try {
               await targetChannel.send(customMessage);
-              await authorUser.send(`âœ… Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
+              await authorUser.send(`Sent to #${targetChannel.name} in ${targetChannel.guild?.name || 'DM'}.`);
             } catch (e) {
-              try { await authorUser.send(`âŒ Failed to send: ${e.message}`); } catch { }
+              try { await authorUser.send(`Failed to send: ${e.message}`); } catch { }
             }
             return;
           }
@@ -2314,16 +2313,16 @@ if (authorId === '669047995009859604') {
           if (targetMessage) {
             try {
               await targetMessage.reply(customMessage);
-              await authorUser.send(`âœ… Replied in #${targetMessage.channel.name}.`);
+              await authorUser.send(`Replied in #${targetMessage.channel.name}.`);
             } catch (e) {
-              try { await authorUser.send(`âŒ Failed to reply: ${e.message}`); } catch { }
+              try { await authorUser.send(`Failed to reply: ${e.message}`); } catch { }
             }
             return;
           }
 
           // 3. Fallback: ID not found
           try {
-            await authorUser.send(`âŒ j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
+            await authorUser.send(`j!chat failed. Wala akong makitang channel o message sa ID: ${targetId}`);
           } catch { }
           return;
         }
@@ -2333,8 +2332,8 @@ if (authorId === '669047995009859604') {
           const owners = ['1477683173520572568', '705770837399306332'];
           const isOwner = owners.includes(message.author.id);
           const idEmbed = new EmbedBuilder()
-            .setTitle('ðŸ†” Identity Check')
-            .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? 'âœ… You are an **Authorized Owner**.' : 'âŒ You are not in the owner whitelist.'}`)
+            .setTitle('Identity Check')
+            .setDescription(`Your ID: \`${message.author.id}\`\n\nChecking permissions...\n${isOwner ? 'You are an **Authorized Owner**.' : 'You are not in the owner whitelist.'}`)
             .setColor(isOwner ? 0x00ff00 : 0xff0000);
           await message.reply({ embeds: [idEmbed] });
           return;
@@ -2342,22 +2341,22 @@ if (authorId === '669047995009859604') {
 
         // j!ping â€” Bot status check
         if (command === 'ping') {
-          await message.reply(`Pong! ðŸ“ Latency is ${Math.round(client.ws.ping)}ms.`);
+          await message.reply(`Pong! Latency is ${Math.round(client.ws.ping)}ms.`);
           return;
         }
 
         // j!admin â€” show admin command list
         if (command === 'admin' || command === 'commandslist') {
           const adminEmbed = new EmbedBuilder()
-            .setTitle('ðŸ›¡ï¸ JanJan Admin Panel ðŸ›¡ï¸')
+            .setTitle('JanJan Admin Panel')
             .setDescription('**Exclusive commands para sa mga diyosa ng server:**\n\n' +
-              'â€¢ `j!status <note>` - Set bot bubble status (Admin only)\n' +
-              'â€¢ `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
-              'â€¢ `j!test` - Trigger mapang-lait greeting/roast\n' +
-              'â€¢ `j!vc <text>` - Male TTS in voice channel\n' +
-              'â€¢ `j!ask <question>` - Voice-only AI response\n' +
-              'â€¢ `j!autotts` - Toggle Auto TTS in channel\n' +
-              'â€¢ `j!join` / `j!leave` - Reset voice connection')
+              '- `j!status <note>` - Set bot bubble status (Admin only)\n' +
+              '- `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
+              '- `j!test` - Trigger mapang-lait greeting/roast\n' +
+              '- `j!vc <text>` - Male TTS in voice channel\n' +
+              '- `j!ask <question>` - Voice-only AI response\n' +
+              '- `j!autotts` - Toggle Auto TTS in channel\n' +
+              '- `j!join` / `j!leave` - Reset voice connection')
             .setColor(0xff0000)
             .setFooter({ text: 'JanJan Bot | Created by drei' });
 
@@ -2399,7 +2398,7 @@ if (authorId === '669047995009859604') {
           }
 
           const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
-          await message.reply({ content: `# ROAST TIME! ðŸ’…\n${mentions}\n\n${aiText}` });
+          await message.reply({ content: `ROAST TIME\n${mentions}\n\n${aiText}` });
 
           // Speak the roast if in voice
           if (message.guild && getVoiceConnection(message.guild.id)) {
@@ -2413,9 +2412,9 @@ if (authorId === '669047995009859604') {
         if (command === 'help') {
           const replyText =
             'Ghorl, eto ang menu ni JanJan:\n' +
-            'â€¢ `j!view @User` - Chika profile ng isang tao\n' +
-            'â€¢ `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
-            'â€¢ Mention/Reply - Mag-chikahan tayo!\n\n' +
+            '- `j!view @User` - Chika profile ng isang tao\n' +
+            '- `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
+            '- Mention/Reply - Mag-chikahan tayo!\n\n' +
             'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
           await message.reply(replyText);
           return;
