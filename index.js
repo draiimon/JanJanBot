@@ -1936,13 +1936,17 @@ if (authorId === '669047995009859604') {
 
       function pickPersonaReactionEmoji(text) {
         const t = (text || '').toLowerCase();
+        // Greetings / check-ins
+        if (/(^|\b)(hi|hello|hey|kumusta|kamusta|musta|good morning|good afternoon|good evening)(\b|$)/i.test(t)) {
+          return '\u{2764}\u{FE0F}'; // ❤️
+        }
         if (/[!?]{2,}/.test(t)) return '\u{1F92F}'; // 🤯
         if (t.includes('haha') || t.includes('hehe') || t.includes('lol') || t.includes('lmao')) return '\u{1F602}'; // 😂
         if (t.includes('sad') || t.includes('iyak') || t.includes('cry') || t.includes('lungkot')) return '\u{1F622}'; // 😢
         if (t.includes('gago') || t.includes('tanga') || t.includes('bwisit') || t.includes('putangina')) return '\u{1F624}'; // 😤
         if (t.includes('?') || t.includes('ano') || t.includes('bakit') || t.includes('paano')) return '\u{1F928}'; // 🤨
         if (t.includes('slay') || t.includes('werk') || t.includes('bongga') || t.includes('pak na pak')) return '\u{2728}'; // ✨
-        return '\u{1F485}'; // 💅
+        return '\u{2764}\u{FE0F}'; // ❤️
       }
 
       async function maybeReactPersona(message, text, intensity = 0.25) {
@@ -1966,13 +1970,14 @@ if (authorId === '669047995009859604') {
         if (Math.random() >= 0.02) return cleaned;
 
         const lower = cleaned.toLowerCase();
-        let addon = '💅';
+        let addon = '❤️';
         if (/(haha|hehe|lol|lmao|tawa|wa(h)+)/i.test(lower)) addon = '😂';
         else if (/[!?]{2,}/.test(cleaned)) addon = '🤯';
         else if (/\?/.test(cleaned)) addon = '🤨';
         else if (/(sad|iyak|cry|lungkot)/i.test(lower)) addon = '😢';
         else if (/(slay|werk|bongga|pak na pak)/i.test(lower)) addon = '✨';
         else if (/(inis|bwisit|galit|as in)/i.test(lower)) addon = '😤';
+        else if (/(hi|hello|hey|kumusta|kamusta|musta)/i.test(lower)) addon = '❤️';
 
         return `${cleaned} ${addon}`.trim();
       }
@@ -2612,10 +2617,27 @@ if (authorId === '669047995009859604') {
       // but stays rare + cooldown-protected to avoid spam.
       const baseAutoChatChance = isPriorityChannel ? 0.75 : 0.5; // 50% base, higher in priority channels
       const autoChatChance = mentionsJanJanName ? 1.0 : baseAutoChatChance; // 100% when name is mentioned
+      // Only "epal without mention" when it likely connects to an ongoing convo:
+      // require recent activity in channel; name-mention bypasses this.
+      let hasRecentBackreadContext = true;
+      if (!mentionsJanJanName && message.channel?.id) {
+        try {
+          const recentRes = await pool.query(
+            'SELECT COUNT(*) FROM messages WHERE channel_id = $1 AND created_at > (NOW() - INTERVAL \'10 minutes\')',
+            [message.channel.id]
+          );
+          const recentCount = parseInt(recentRes.rows?.[0]?.count || '0', 10);
+          hasRecentBackreadContext = recentCount >= 6;
+        } catch {
+          hasRecentBackreadContext = true;
+        }
+      }
+
       const shouldAutoChat =
         !rawContent.startsWith(prefix) &&
         !looksLowSignal &&
         autoChatEligible &&
+        (mentionsJanJanName || hasRecentBackreadContext) &&
         Math.random() < autoChatChance;
 
       if (!isMention && !isReplyToBot && !shouldAutoChat) {
