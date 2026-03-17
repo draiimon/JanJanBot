@@ -1958,6 +1958,56 @@ if (authorId === '669047995009859604') {
         await message.react(emoji).catch(() => { });
       }
 
+      async function extractAndStoreUserFacts({ userId, displayName, messageText }) {
+        if (!userId || !messageText) return;
+        const cleaned = String(messageText).replace(/\s+/g, ' ').trim();
+        if (!cleaned || cleaned.length < 3) return;
+
+        // Lightweight fact extraction (keeps DB populated so "kilala mo ba" works)
+        try {
+          const res = await performChatRequest({
+            model: 'llama-3.1-8b-instant',
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'Extract 1-2 short stable user facts from the message for memory. ' +
+                  'Rules: no raw Discord IDs, no sexual details, no private/sensitive guesses. ' +
+                  'If nothing stable, output NONE. ' +
+                  'Format exactly: FACTS: fact1 | fact2'
+              },
+              {
+                role: 'user',
+                content: `Name: ${displayName || 'user'}\nMessage: ${cleaned}`
+              }
+            ],
+            temperature: 0.2,
+            max_tokens: 80
+          });
+
+          const text = res.data?.choices?.[0]?.message?.content || '';
+          const m = text.match(/FACTS:\s*(.*)/i);
+          const factsRaw = (m ? m[1] : '').trim();
+          if (!factsRaw || /^none\b/i.test(factsRaw)) return;
+
+          const safeFacts = factsRaw
+            .replace(/\d{17,20}/g, '') // avoid IDs
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+          if (!safeFacts) return;
+
+          const oldRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [userId]);
+          const oldFacts = oldRes.rows?.[0]?.facts || '';
+          const combined = oldFacts ? `${oldFacts} | ${safeFacts}` : safeFacts;
+
+          await pool.query(
+            'INSERT INTO user_memory (user_id, facts, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ' +
+              'ON CONFLICT (user_id) DO UPDATE SET facts = $2, updated_at = CURRENT_TIMESTAMP',
+            [userId, combined.slice(-1500)]
+          );
+        } catch { }
+      }
+
       function keepChikaEmojisLight(text) {
         // Keep chat replies basically emoji-free.
         // Only ~2% chance to append ONE chika-relevant emoji.
@@ -2547,7 +2597,7 @@ if (authorId === '669047995009859604') {
             return;
           }
 
-          // Pull stored facts + some recent messages authored by the target in this channel
+          // Pull stored facts + recent messages authored by the target across the SERVER
           let facts = '';
           let recentLines = [];
           try {
@@ -2555,10 +2605,15 @@ if (authorId === '669047995009859604') {
             facts = factsRes.rows?.[0]?.facts || '';
           } catch { }
           try {
-            const msgRes = await pool.query(
-              'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 20',
-              [message.channel.id, targetUser.id]
-            );
+            const msgRes = message.guild
+              ? await pool.query(
+                  'SELECT channel_id, author_tag, content, created_at FROM messages WHERE guild_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 35',
+                  [message.guild.id, targetUser.id]
+                )
+              : await pool.query(
+                  'SELECT channel_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 35',
+                  [message.channel.id, targetUser.id]
+                );
             recentLines = (msgRes.rows || [])
               .reverse()
               .map((r) => {
@@ -2566,7 +2621,8 @@ if (authorId === '669047995009859604') {
                 const who = r.author_tag || (targetUser.globalName || targetUser.username || 'someone');
                 const msg = (r.content || '').replace(/\s+/g, ' ').trim();
                 if (!msg) return null;
-                return `[${ts}] ${who}: ${msg}`;
+                const where = r.channel_id ? ` (ch:${r.channel_id})` : '';
+                return `[${ts}] ${who}${where}: ${msg}`;
               })
               .filter(Boolean);
           } catch { }
@@ -2590,7 +2646,7 @@ if (authorId === '669047995009859604') {
           const voiceMembers = [];
           const discordContext = await buildDiscordAwarenessContext(message, false);
           const mentionContext = buildMentionContext(message);
-          const summary = await callGroqChat(prompt, targetUser.id, message.channel.id, voiceMembers, {
+          const summary = await callGroqChat(prompt, message.author.id, message.channel.id, voiceMembers, {
             fastMode: false,
             researchContext: [],
             discordContext,
@@ -2904,6 +2960,20 @@ if (authorId === '669047995009859604') {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
       }
 
+      // Always store user facts on interaction so summaries work
+      if (isMention || isReplyToBot || shouldAutoChat) {
+        const displayAuthor =
+          message.member?.displayName ||
+          message.author.globalName ||
+          message.author.username ||
+          message.author.tag;
+        await extractAndStoreUserFacts({
+          userId: message.author.id,
+          displayName: displayAuthor,
+          messageText: rawContent
+        });
+      }
+
       // "Kilala mo ba..." questions: auto-summarize from DB (no special command needed)
       const lowerContent = (content || '').toLowerCase();
       const isWhoAmIPrompt =
@@ -2930,10 +3000,15 @@ if (authorId === '669047995009859604') {
             facts = factsRes.rows?.[0]?.facts || '';
           } catch { }
           try {
-            const msgRes = await pool.query(
-              'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 25',
-              [message.channel.id, u.id]
-            );
+            const msgRes = message.guild
+              ? await pool.query(
+                  'SELECT channel_id, author_tag, content, created_at FROM messages WHERE guild_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 35',
+                  [message.guild.id, u.id]
+                )
+              : await pool.query(
+                  'SELECT channel_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 35',
+                  [message.channel.id, u.id]
+                );
             recentLines = (msgRes.rows || [])
               .reverse()
               .map((r) => {
@@ -2941,7 +3016,8 @@ if (authorId === '669047995009859604') {
                 const who = r.author_tag || (u.globalName || u.username || 'someone');
                 const msg = (r.content || '').replace(/\s+/g, ' ').trim();
                 if (!msg) return null;
-                return `[${ts}] ${who}: ${msg}`;
+                const where = r.channel_id ? ` (ch:${r.channel_id})` : '';
+                return `[${ts}] ${who}${where}: ${msg}`;
               })
               .filter(Boolean);
           } catch { }
