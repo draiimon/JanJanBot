@@ -65,6 +65,7 @@ const {
   const autoChatCooldowns = new Map(); // scopeKey -> lastAutoChatMs (guild-wide; DM fallback)
   const sleepGuilds = new Set(); // guildId -> sleep mode for auto-interact
   const researchEnabledGuilds = new Set(); // guildId -> allow web research + sources (admin toggled)
+  const lastPortrayByChannel = new Map(); // channelId -> { userId, displayName }
   const priorityAutoChatChannels = new Set([
     '1426746103797256200',
     '1427128206431096913',
@@ -424,9 +425,9 @@ const {
     const buf = Buffer.from(imgRes.data);
     const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
 
-    // Send final image message
+    // Send final image message (Tagalog caption)
     await channel.send({
-      content: `eto na beh: **${safePrompt.slice(0, 140)}**`,
+      content: `ayan na: **${safePrompt.slice(0, 140)}**`,
       files: [file]
     });
 
@@ -2980,6 +2981,8 @@ if (authorId === '669047995009859604') {
             targetUser.username ||
             targetUser.tag;
 
+          lastPortrayByChannel.set(message.channel.id, { userId: targetUser.id, displayName });
+
           let facts = '';
           try {
             const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [targetUser.id]);
@@ -3411,6 +3414,49 @@ if (authorId === '669047995009859604') {
 
       if (!content) {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
+      }
+
+      // If user corrects a portrayal (e.g., "babae si Keia"), apologize and re-generate.
+      // Works even without mention when the convo is still connected.
+      const lastPortray = lastPortrayByChannel.get(message.channel.id) || null;
+      const genderFix = (content || '').match(/\b(babae|lalaki)\s+si\s+([^\n\r]+)$/i);
+      if (lastPortray && genderFix && LEONARDO_API_KEY) {
+        const saidGender = genderFix[1].toLowerCase();
+        const namePart = String(genderFix[2] || '').toLowerCase();
+        const targetName = String(lastPortray.displayName || '').toLowerCase();
+        if (namePart && targetName && (namePart.includes(targetName) || targetName.includes(namePart))) {
+          const genderWord = saidGender === 'babae' ? 'woman' : 'man';
+          await message.reply(`sorry, my bad. ${saidGender} nga si ${lastPortray.displayName}. sige ulitin ko.`);
+          try {
+            const promptDraftRes = await performChatRequest({
+              model: 'llama-3.1-8b-instant',
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You are crafting an image prompt for Leonardo.ai. Output ONLY the prompt text, no labels. ' +
+                    'Make it vivid but safe. No raw Discord IDs. No sexual content. Keep under 280 chars.'
+                },
+                {
+                  role: 'user',
+                  content:
+                    `Portray: ${lastPortray.displayName}\n` +
+                    `Hard constraint: gender = ${genderWord}\n` +
+                    `Style: photoreal portrait unless specified.\n` +
+                    `Extra: gymrat vibe, modern gym background, cinematic lighting.`
+                }
+              ],
+              temperature: 0.6,
+              max_tokens: 120
+            });
+            const drafted = (promptDraftRes.data?.choices?.[0]?.message?.content || '').trim();
+            const finalPrompt = drafted.replace(/\s+/g, ' ').slice(0, 280);
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt: finalPrompt });
+          } catch (e) {
+            await message.reply(`teh, fail ulit. ${e.message}`);
+          }
+          return;
+        }
       }
 
       // Natural image request (mention/reply mode): "send ka picture ng ..."
