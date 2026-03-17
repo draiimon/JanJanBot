@@ -2715,7 +2715,8 @@ if (authorId === '669047995009859604') {
           }
 
           const aiText = await callGroqChat(aiPrompt, message.author.id, message.channel.id, voiceMembers);
-          await message.reply({ content: `ROAST TIME\n${mentions}\n\n${aiText}` });
+          const header = members.length > 0 ? `**${mentions}**\n\n` : '';
+          await message.reply({ content: `${header}${aiText}` });
 
           // Speak the roast if in voice
           if (message.guild && getVoiceConnection(message.guild.id)) {
