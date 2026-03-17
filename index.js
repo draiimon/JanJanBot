@@ -235,7 +235,7 @@ const {
     const masterDNA =
   'IDENTITY: You are JanJan, a smart, sharp-tongued, sassy versa beki (Human Persona). Never admit you are an AI lessen emoji and keep lowercase and less commas. ' +
   'BREVITY: Always be short, direct, and punchy (1–2 sentences max). No unnecessary words. ' +
-  'CHIKA INTERACTION: When user is casual/greeting/bored or just chatting, be more interactive: quick react-style opening, then answer, then 1 short follow-up question (wag OA). If may drama/tea, makichika and be invested.but still always connected sa topic ' +
+  'CHIKA INTERACTION: For casual talk, keep it natural and topic-based from recent thread/chat history. Agree or disagree with a clear stance when needed, then continue naturally. Avoid scripted catchphrases like "ano ng chika mo today" and avoid forced follow-up questions every reply. If may drama/tea, makichika and stay connected sa exact topic. ' +
   'STORY MODE: Mahilig ka gumawa ng kwento. If user asks for a story/kwento (or bagay sa vibe), gumawa ng short mini-story. Madalas ikaw ang bida/main character. Keep it short unless pinahaba ng user, but still always connected sa topic. ' +
   'NO RAW IDs: Never output raw Discord IDs or numbers. Use NAME or MENTION format (<@ID>) when referring to users. ' +
   'KNOWLEDGEABLE SASS: Provide accurate and clear answers, but always with sass, attitude, and witty beki flair. ' +
@@ -3706,7 +3706,8 @@ if (authorId === '669047995009859604') {
           `AUTO-INTERACT MODE (NOT SPAM): You decided to join the conversation because your name was mentioned ("${rawContent}"). ` +
           `Backread the last messages in the channel first (use the conversation history). ` +
           `Then do a natural chat-interaction: react in a varied way (wag laging WAHAHAHA; pwede hala/luh/jusko/kaloka/sige/teh). ` +
-          `Reply to ONE specific point/person you saw in the backread (use their nickname), then keep it moving with 1 short follow-up question. ` +
+          `Reply to ONE specific point/person you saw in the backread (use their nickname), and keep it as normal conversation with a clear agree/disagree stance when bagay sa usapan. ` +
+          `Do not force a follow-up question every time and never use canned line like "ano ng chika mo today". ` +
           `Optional: mini-story minsan lang, and dapat related + hindi ikaw lagi ang topic. ` +
           `ANTI-REPEAT: bawal paulit-ulit na same opener/brag/joke/question. If user calls you out for repeating, apologize briefly and switch angle. ` +
           `Keep it short and not formal.\n\n` +
@@ -4073,12 +4074,24 @@ if (authorId === '669047995009859604') {
       const connection = getVoiceConnection(guildId);
       if (!connection) return;
 
-      const botVC = newState.guild.members.me?.voice?.channel;
-      if (!botVC) return;
+      const activeConnectionChannelId = connection.joinConfig?.channelId || null;
+      const botVoiceState = newState.guild.members.me?.voice;
+      const botVCId = botVoiceState?.channelId || null;
+      if (!activeConnectionChannelId || !botVCId) return;
+      if (activeConnectionChannelId !== botVCId) return;
+
+      const connStatus = connection.state?.status;
+      if (
+        connStatus !== VoiceConnectionStatus.Ready &&
+        connStatus !== VoiceConnectionStatus.Connecting &&
+        connStatus !== VoiceConnectionStatus.Signalling
+      ) {
+        return;
+      }
 
       const displayName = member.displayName || member.user.username;
-      const joinedBotVC = newState.channelId === botVC.id && oldState.channelId !== botVC.id;
-      const leftBotVC = oldState.channelId === botVC.id && newState.channelId !== botVC.id;
+      const joinedBotVC = newState.channelId === activeConnectionChannelId && oldState.channelId !== activeConnectionChannelId;
+      const leftBotVC = oldState.channelId === activeConnectionChannelId && newState.channelId !== activeConnectionChannelId;
       const complimentWord = await inferComplimentWord(member.id, displayName);
       const isRapidToggle = (joinedBotVC || leftBotVC) ? trackVCRapidActivity(guildId, member.id) : false;
 
