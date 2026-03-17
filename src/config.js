@@ -28,8 +28,16 @@ function loadConfig(env = process.env) {
   const groqKeys = [
     env.GROQ_API_KEY1,
     env.GROQ_API_KEY2,
+    env.GROQ_API_KEY3,
+    env.GROQ_API_KEY4,
+    env.GROQ_API_KEY5,
+    env.GROQ_API_KEY6,
     env.GROQ_API_KEY
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .map((k) => String(k).trim())
+    .filter(Boolean)
+    .filter((k, i, arr) => arr.indexOf(k) === i);
 
   const missing = [];
 
@@ -42,7 +50,7 @@ function loadConfig(env = process.env) {
   }
 
   if (groqKeys.length === 0) {
-    missing.push('GROQ_API_KEY (or GROQ_API_KEY1/GROQ_API_KEY2)');
+    missing.push('GROQ_API_KEY (or GROQ_API_KEY1..GROQ_API_KEY6)');
   }
 
   return {
