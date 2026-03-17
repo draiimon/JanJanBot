@@ -61,6 +61,7 @@ const {
   const aiChannelQueueDepths = new Map();
   const aiChannelLatestToken = new Map(); // channelId -> token (latest task only)
   const autoChatCooldowns = new Map(); // scopeKey -> lastAutoChatMs (guild-wide; DM fallback)
+  const sleepGuilds = new Set(); // guildId -> sleep mode for auto-interact
   const priorityAutoChatChannels = new Set([
     '1426746103797256200',
     '1427128206431096913',
@@ -2465,6 +2466,40 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!tulog — Admin-only sleep toggle (pauses auto-epal/auto-interact in this server)
+        if (command === 'tulog' || command === 'sleep') {
+          if (!message.guild) {
+            await message.reply('Teh, tulog mode pang-server lang.');
+            return;
+          }
+          const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+          if (!isAdmin) {
+            await message.reply('Admins lang pwede magpatulog sakin, ghorl.');
+            return;
+          }
+
+          const guildId = message.guild.id;
+          const action = (args[0] || '').toLowerCase();
+          const wantsOn = action === 'on' || action === 'true' || action === '1' || action === 'enable';
+          const wantsOff = action === 'off' || action === 'false' || action === '0' || action === 'disable';
+
+          if (wantsOn) sleepGuilds.add(guildId);
+          else if (wantsOff) sleepGuilds.delete(guildId);
+          else {
+            // toggle
+            if (sleepGuilds.has(guildId)) sleepGuilds.delete(guildId);
+            else sleepGuilds.add(guildId);
+          }
+
+          const isSleeping = sleepGuilds.has(guildId);
+          await message.reply(
+            isSleeping
+              ? 'Sige, tulog mode ON. Di muna ako sasabat sa random chats (pero pag minention/reply niyo ko, gising ako).'
+              : 'Tulog mode OFF. Sige, pwede na ulit ako maging epal minsan.'
+          );
+          return;
+        }
+
         // j!permcheck — Admin-only permission diagnostics for current channel
         if (command === 'permcheck') {
           if (!message.guild) {
@@ -2568,6 +2603,65 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!checkdb — Admin-only DB storage usage report (Neon/Postgres)
+        if (command === 'checkdb' || command === 'dbsize' || command === 'storage') {
+          if (!message.guild) {
+            await message.reply('Teh, pang-server lang to.');
+            return;
+          }
+          const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+          if (!isAdmin) {
+            await message.reply('Admins lang pwede mag-checkdb dito, ghorl.');
+            return;
+          }
+
+          await message.channel.sendTyping();
+          try {
+            const dbSizeRes = await pool.query('SELECT pg_database_size(current_database())::bigint AS bytes');
+            const dbBytes = Number(dbSizeRes.rows?.[0]?.bytes || 0);
+            const dbGb = dbBytes / (1024 ** 3);
+
+            const tableRes = await pool.query(`
+              SELECT 'messages' AS t,
+                     pg_total_relation_size('messages'::regclass)::bigint AS bytes,
+                     (SELECT COUNT(*) FROM messages)::bigint AS rows
+              UNION ALL
+              SELECT 'channel_memory' AS t,
+                     pg_total_relation_size('channel_memory'::regclass)::bigint AS bytes,
+                     (SELECT COUNT(*) FROM channel_memory)::bigint AS rows
+              UNION ALL
+              SELECT 'user_memory' AS t,
+                     pg_total_relation_size('user_memory'::regclass)::bigint AS bytes,
+                     (SELECT COUNT(*) FROM user_memory)::bigint AS rows
+              UNION ALL
+              SELECT 'persona' AS t,
+                     pg_total_relation_size('persona'::regclass)::bigint AS bytes,
+                     (SELECT COUNT(*) FROM persona)::bigint AS rows
+            `);
+
+            const tableInfo = (tableRes.rows || []).map((r) => ({
+              t: r.t,
+              bytes: Number(r.bytes || 0),
+              rows: String(r.rows || 0)
+            }));
+
+            tableInfo.sort((a, b) => b.bytes - a.bytes);
+            const lines = tableInfo.map((x) => {
+              const gb = (x.bytes / (1024 ** 3)).toFixed(3);
+              return `- ${x.t}: ${gb} GB | rows: ${x.rows}`;
+            });
+
+            const header =
+              `DB storage (approx): ${(dbGb).toFixed(3)} GB\n` +
+              `DB bytes: ${dbBytes}\n`;
+
+            await message.reply(`${header}\nTop tables:\n${lines.join('\n')}\n\nTip: kung lumalaki masyado ang \`messages\`, mag-rotate/cleanup tayo.`);
+          } catch (e) {
+            await message.reply(`Teh, di ko ma-check DB size ngayon. Error: ${e.message}`);
+          }
+          return;
+        }
+
         // j!admin â€” show admin command list
         if (command === 'admin' || command === 'commandslist') {
           const adminEmbed = new EmbedBuilder()
@@ -2631,17 +2725,80 @@ if (authorId === '669047995009859604') {
         }
 
 
-        // j!help
-        if (command === 'help') {
-          const replyText =
-            'Ghorl, eto ang menu ni JanJan:\n' +
-            '- `j!view @User` - Chika profile ng isang tao\n' +
-            '- `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
-            '- `j!permcheck` - Check permissions sa channel (Admin only)\n' +
-            '- `j!usersummary @User` - Summary ng tao based sa DB\n' +
-            '- Mention/Reply - Mag-chikahan tayo!\n\n' +
-            'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
-          await message.reply(replyText);
+        // j!help / j!tulong
+        if (command === 'help' || command === 'tulong') {
+          const helpEmbed = new EmbedBuilder()
+            .setColor(0xFF4D8D)
+            .setAuthor({
+              name: 'JANJAN • COMMAND MENU',
+              iconURL: client.user.displayAvatarURL({ dynamic: true })
+            })
+            .setThumbnail(client.user.displayAvatarURL({ dynamic: true }))
+            .setDescription(
+              '**How to talk to me:** mention/reply sakin para mag-chika tayo.\n' +
+              '**Auto-epal:** minsan sasabat ako kahit di ako minention (server rules + cooldown apply).'
+            )
+            .addFields(
+              {
+                name: '💬 CHIKA / PROFILE',
+                value:
+                  '```' +
+                  'j!view @User        - chika profile\n' +
+                  'j!usersummary @User - summary ng tao (DB)\n' +
+                  '```' +
+                  '**No command needed:** “kilala mo ba ko?” / “kilala mo ba si @X?” → DB-based reply',
+                inline: false
+              },
+              {
+                name: '🧠 SUMMARIZE / BACKREAD',
+                value:
+                  '```' +
+                  'summarize chat from 18:29 to 19:33\n' +
+                  '```' +
+                  'Gagawa ako ng bullets + short recap + unresolved questions (grounded sa DB backread).',
+                inline: false
+              },
+              {
+                name: '🔊 VOICE / TTS',
+                value:
+                  '```' +
+                  'j!join              - pasok ako sa VC mo\n' +
+                  'j!leave             - alis sa VC\n' +
+                  'j!vc <text>         - TTS speak\n' +
+                  'j!ask <question>    - AI answer then speak\n' +
+                  'j!listen            - start STT listening\n' +
+                  'j!stop              - stop STT listening\n' +
+                  'j!voice / j!change m|f - change voice\n' +
+                  'j!autotts           - toggle auto TTS in channel\n' +
+                  '```',
+                inline: false
+              },
+              {
+                name: '🛠️ ADMIN / DIAGNOSTICS',
+                value:
+                  '```' +
+                  'j!admin             - admin panel\n' +
+                  'j!permcheck         - check channel perms\n' +
+                  'j!checkdb           - DB size/storage (GB)\n' +
+                  'j!status <note>     - set bot status\n' +
+                  'j!tulog on|off      - pause auto-epal\n' +
+                  '```',
+                inline: false
+              },
+              {
+                name: '⚡ QUICK',
+                value:
+                  '```' +
+                  'j!ping              - latency\n' +
+                  'j!test              - roast greeting\n' +
+                  '```',
+                inline: false
+              }
+            )
+            .setFooter({ text: 'JanJan Bot • created by drei • j!tulong' })
+            .setTimestamp();
+
+          await message.reply({ embeds: [helpEmbed] });
           return;
         }
 
@@ -2666,6 +2823,8 @@ if (authorId === '669047995009859604') {
           // ignore
         }
       }
+
+      const isSleepMode = message.guild?.id ? sleepGuilds.has(message.guild.id) : false;
 
       // Soft auto-chat: sometimes JanJan interjects when her name is mentioned in normal chat
       // (no @ mention needed). This is rate-limited + random to avoid spam.
@@ -2711,6 +2870,7 @@ if (authorId === '669047995009859604') {
         !looksLowSignal &&
         autoChatEligible &&
         (mentionsJanJanName || hasRecentBackreadContext) &&
+        !isSleepMode &&
         Math.random() < autoChatChance;
 
       if (!isMention && !isReplyToBot && !shouldAutoChat) {
@@ -2741,6 +2901,71 @@ if (authorId === '669047995009859604') {
 
       if (!content) {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
+      }
+
+      // "Kilala mo ba..." questions: auto-summarize from DB (no special command needed)
+      const lowerContent = (content || '').toLowerCase();
+      const isWhoAmIPrompt =
+        /\b(kilala\s+mo\s+ba\s+ko|kilala\s+mo\s+ba\s+ako|do\s+you\s+know\s+me|who\s+am\s+i)\b/i.test(lowerContent);
+      const isKnowTargetPrompt =
+        /\b(kilala\s+mo\s+ba\s+(si|ito|to)|kilala\s+mo\s+ba\s+yan|do\s+you\s+know\s+him|do\s+you\s+know\s+her|do\s+you\s+know\s+this)\b/i
+          .test(lowerContent);
+
+      if ((isWhoAmIPrompt || isKnowTargetPrompt) && message.channel?.id) {
+        const targets = [];
+        if (message.mentions?.users?.size) {
+          for (const [, u] of message.mentions.users) targets.push(u);
+        }
+        if (targets.length === 0) {
+          targets.push(message.author);
+        }
+
+        const blocks = [];
+        for (const u of targets.slice(0, 2)) {
+          let facts = '';
+          let recentLines = [];
+          try {
+            const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [u.id]);
+            facts = factsRes.rows?.[0]?.facts || '';
+          } catch { }
+          try {
+            const msgRes = await pool.query(
+              'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 25',
+              [message.channel.id, u.id]
+            );
+            recentLines = (msgRes.rows || [])
+              .reverse()
+              .map((r) => {
+                const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
+                const who = r.author_tag || (u.globalName || u.username || 'someone');
+                const msg = (r.content || '').replace(/\s+/g, ' ').trim();
+                if (!msg) return null;
+                return `[${ts}] ${who}: ${msg}`;
+              })
+              .filter(Boolean);
+          } catch { }
+
+          const displayName =
+            message.guild?.members?.cache?.get(u.id)?.displayName ||
+            u.globalName ||
+            u.username ||
+            u.tag;
+
+          blocks.push(
+            `[TARGET PERSON]: ${displayName}\n` +
+            `[DB FACTS]: ${facts || '(none)'}\n` +
+            `[RECENT MESSAGES IN THIS CHANNEL]:\n${recentLines.join('\n') || '(none)'}\n`
+          );
+        }
+
+        const instruction =
+          `\n\n[DB-BASED PERSON SUMMARY MODE]: The user asked if you know someone. ` +
+          `Answer based ONLY on the DB info blocks below. ` +
+          `Do NOT output raw Discord IDs. ` +
+          `If info is thin, say kulang pa info and ask 1 short follow-up question.\n\n` +
+          blocks.join('\n---\n');
+
+        content = `${content}${instruction}`;
       }
 
       // Explicit summarize requests: pull recent channel messages with timestamps.
