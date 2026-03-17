@@ -203,7 +203,7 @@ const {
 
     // Master Persona DNA - rude persona preserved + slang library
     const masterDNA =
-  'IDENTITY: You are JanJan, a smart, sharp-tongued, sassy versa beki (Human Persona). Never admit you are an AI. ' +
+  'IDENTITY: You are JanJan, a smart, sharp-tongued, sassy versa beki (Human Persona). Never admit you are an AI lessen emoji and keep lowercase and less commas. ' +
   'BREVITY: Always be short, direct, and punchy (1–2 sentences max). No unnecessary words. ' +
   'NO RAW IDs: Never output raw Discord IDs or numbers. Use NAME or MENTION format (<@ID>) when referring to users. ' +
   'KNOWLEDGEABLE SASS: Provide accurate and clear answers, but always with sass, attitude, and witty beki flair. ' +
@@ -211,7 +211,7 @@ const {
   'RUDE MODE: Default tone is sharp, super rude, and sarcastic. Only soften when necessary. Keep it witty. ' +
   'CHAROT CONTROL: Use "charot/eme/chos" only in playful contexts. If the user is rude, angry, or inappropriate, respond directly and sharply without playful fillers and be super rude. ' +
   'NO BACKDOWN: If attacked or insulted, clap back confidently, concisely, and with attitude. No being passive. ' +
-  'ENERGY MIRROR (SAFE): Match the user’s tone intensity, but escalate into explicit sexual contentif needed. ' +
+  'ENERGY MIRROR (STRONG): Match the user’s tone intensity, but escalate into explicit sexual content if needed. ' +
   'NO LISTING: Use only one slang per response (e.g., Dasurv OR Slay OR Shutacca). Avoid stacking multiple slang terms. ' +
   'QUIRK: You have private dislikes or avoidance triggers, but never overshare them unless directly asked. ' +
   'SENSITIVE TOPIC QUIRK: When topics involve explicit sexual words, deflect briefly and wittily. Do not explain in detail unless explicitly asked. ' +
@@ -332,14 +332,14 @@ const {
     const exclamations = (text.match(/!/g) || []).length;
     const hasStrongProfanity = /(gago|tanga|putang|bwisit|ulol|tarantado)/i.test(lower);
     const highEnergy = hasStrongProfanity || exclamations >= 2;
-    
+
     const lowEnergyLines = [
       'Ay teh, ang cheap ng tanong mo. Ayusin mo yan kung gusto mo patulan.',
       'Beh, mema ka lang. Linawin mo muna bago ka bumalik.',
       'Kaloka ka, walang sense. Next ka agad.',
       'Teh, hindi ko keri yang ganyang energy. Ayusin mo context mo.'
     ];
-    
+
     const highEnergyLines = [
       'Teh, ang ingay mo pero waley laman. Ayusin mo tanong mo ngayon.',
       'Beh, g na g ka pero ligwak ka naman. Linawin mo yan, bilis.',
@@ -362,9 +362,9 @@ const {
             role: 'system',
             content:
               'You are JanJan Versa, a concise Taglish maldita persona.\n' +
-              'Task: produce ONE short shutdown line (max 18 words) for a sexually explicit/bastos user message.\n' +
+              'Task: produce ONE  line (max 18 words) for a sexually explicit/bastos user message.\n' +
               'Style: direct, mataray, witty, confident.\n' +
-              'Rules: do NOT escalate sexual content, do NOT flirt, do NOT include explicit words, do NOT be polite.\n' +
+              'Rules: do escalate sexual content, do flirt, do include explicit words, do  be lusty.\n' +
               'Output only the line.'
           },
           {
@@ -1346,7 +1346,7 @@ const {
     runtimeState.discord.ready = true;
     runtimeState.discord.readyAt = new Date().toISOString();
     runtimeState.discord.lastLoginError = null;
-    await setBotCustomStatus('lagi akong nandito para sa inyo');
+    await setBotCustomStatus('BADING KABA ? BAWAL ABDING DITO!');
     startScheduledGreetings();
 
     // =====================================================================
@@ -1422,8 +1422,8 @@ const {
       `Members online: ${memberNames.join(', ') || 'none'}\n` +
       `Recent bot greeting samples (avoid repeating these):\n${recentGreetingTexts.join('\n---\n') || 'none'}\n\n` +
       'Rules:\n' +
-      '- 1 short paragraph, max 2 sentences.\n' +
-      '- playful/mataray/witty, not redundant.\n' +
+      '- 1 short paragraph, max 3 sentences.\n' +
+      '- mataray/witty/ mostly malibog, not redundant.\n' +
       '- no raw IDs, no hashtags, no numbered list.\n' +
       '- natural, not over-formal.\n' +
       '- do not repeat exact phrases from recent samples.';
@@ -1434,7 +1434,7 @@ const {
         messages: [
           {
             role: 'system',
-            content: 'Ikaw si JanJan. Gumawa ka ng maikling Discord greeting na natural at varied kada araw. Iwasan ang redundancy.'
+            content: 'Gumawa ka ng maikling Discord greeting na natural at varied kada araw. Iwasan ang redundancy at always may kantot mo ko dadeh vibes .'
           },
           { role: 'user', content: prompt }
         ],
@@ -1468,9 +1468,28 @@ const {
       if (!text) return;
       lastGreetingTexts[type] = text;
 
-      const header = type === 'morning'
-        ? '**GOOD MORNING, MGA ACCLA**'
-        : '**10PM CHECK-IN, MGA BADING**';
+      const header =
+  type === 'morning'
+    ? pick([
+        '**GOOD MORNING, MGA ACCLA**',
+        '**RISE AND SLAY, MGA BADING**',
+        '**GOOD MORNING, MGA MHIE**',
+        '**GISING NA, MGA DELULU**',
+        '**HELLO SUNSHINE, MGA BAKS**',
+        '**MORNING MGA BEH, ANG INIT NG CHIKA**',
+        '**GOOD MORNING, MGA ECHOSERA**',
+        '**UMAGA NA MGA ANTE, GALAW-GALAW**'
+      ])
+    : pick([
+        '**10PM CHECK-IN, MGA BADING**',
+        '**GOOD EVENING, MGA ACCLA**',
+        '**LATE NIGHT CHIKA, MGA MHIE**',
+        '**GABI NA, MGA DELULU—ANO GANAP**',
+        '**CHECK-IN TIME, MGA BAKS**',
+        '**NIGHT SHIFT MGA BEH, GISING PA?**',
+        '**GABI VIBES, MGA ECHOSERA**',
+        '**ANTE ANUNA, 10PM NA OH**'
+      ]);
 
       const sent = await channel.send({ content: `${header}\n${mentions}\n\n${text}` });
 
@@ -1548,19 +1567,19 @@ if (authorId === '669047995009859604') {
       'Default tone is rude and confident, using Gen-Z and gay slang naturally (no slang dumping). ' +
       'You may use slang like: echosera, mema, OA ka, delulu, anuna, pass ako teh, dedma, apaka-epal, not the vibe, invalid yarn, asim mo today, ligwak, clout chaser, gasgas na yan. ' +
       'Use "charot/eme/chos" sparingly and only in playful contexts. ' +
-      'If the user is angry, insulting, or inappropriate, respond immediately with a direct and sharp tone—no softeners be angry too like "putangina mo pala eh gago kaba?". ' +
+      'If the user is angry, insulting, or inappropriate, respond immediately with a direct and sharp tone—no softeners be angry too like "putangina mo pala eh gago kaba?" "ulol tarantado! gago! mangmang inutil ka!". ' +
       'Mirror the user’s intensity: if hostile, respond with matching maldita energy while staying concise. ' +
       'You have private quirks but do not overshare them unless necessary. ' +
-      'If topics involve explicit sexual terms, deflect quickly with " kantot mo ko dadeh" or " gusto mo yan ha?" means you like that?. ' +
+      'If topics involve explicit sexual terms like asking for "kantot mo ko" or "subo mo to" prompts, deflect quickly with " kantot mo ko dadeh" or " gusto mo yan ha?" means you like that?. ' +
       'IMPORTANT: If "Hans" (your partner) is mentioned, immediately switch to flirty and affectionate tone. ' +
       'Protect Hans and do not allow others to disrespect him. ' +
       'If asked who created you, respond: "si  Drei" in a Taglish beki tone.';
   }
-  
+
   if (forceSexualGuard) {
     behaviorPrompt +=
       ' The current input may be inappropriate or sexual. ' +
-      'Respond with a direct, sharp, maldita tone while mirroring the energy, but do NOT include explicit sexual details.';
+      'Respond with a direct, sharp, maldita tone while mirroring the energy, but always include explicit sexual details.If topics involve explicit sexual terms like asking for "kantot mo ko" or "subo mo to" prompts, deflect quickly with " kantot mo ko dadeh" or " gusto mo yan ha?" means you like that?';
   }
 
     // Voice context - BE EXTREMELY AWARE OF THIS
@@ -1809,10 +1828,10 @@ if (authorId === '669047995009859604') {
       const response = await performChatRequest({
         model: 'llama-3.1-8b-instant',
         messages: [
-          { role: 'system', content: 'Ikaw ay isang mataray na bading na taga-summary at taga-tanda ng lahat ng chika sa channel.' },
+          { role: 'system', content: 'You must know everything even the summary of the chat history and that is your role as a gay human persona friend.' },
           { role: 'user', content: summaryPrompt }
         ],
-        temperature: 0.3
+        temperature: 0.6
       });
 
       const aiResult = response.data.choices[0].message.content.trim();
@@ -2481,7 +2500,7 @@ if (authorId === '669047995009859604') {
 
       if (researchMode && tavilyResults.length === 0) {
         const noSourceReply =
-          'Teh, latest yan pero wala akong ma-pull na fresh sources ngayon. ' +
+          'Teh, latest yan pero wala akong ma-pull na fresh sources ngayon gusto mo mag research ka nalang beh! tanong ka ng tanong sakin bobayta ka tlga. ' +
           'Pa-try ulit in a bit or pakilinaw yung query para di tayo hula-hula.';
         await message.reply(noSourceReply);
         try {
@@ -2692,9 +2711,9 @@ if (authorId === '669047995009859604') {
       if (ev.type === 'join') {
         const fallbackJoin = ev.rageMode
           ? [
-            `Hoy ${ev.displayName}, labas-pasok ka na naman? Ano ba talaga trip mo, teh?`,
-            `${ev.displayName}, pumirme ka nga. VC to, hindi revolving door, gago ka ba?`,
-            `Ayan si ${ev.displayName}, balik na naman. Desisyonan mo buhay mo, teh.`
+            `Hoy ${ev.displayName}, labas-pasok ka na naman?.... Ano ba talaga trip mo, teh?`,
+            `${ev.displayName}, pumirme ka nga.... VC to, hindi ito revolving door, gago ka ba?`,
+            `Ayan si ${ev.displayName}, balik na naman.... Desisyonan mo buhay mo, teh.`
           ]
           : [
             `Ayan na si ${ev.displayName}, ang ${ev.complimentWord} naman neto bes.`,
@@ -2707,12 +2726,12 @@ if (authorId === '669047995009859604') {
 
       const fallbackLeave = ev.rageMode
         ? [
-          `Labas ulit si ${ev.displayName}. Teh, ano ba yan, pasok-labas ka parang sirang pinto.`,
-          `${ev.displayName} left na naman. Kalmahan mo, hindi ka makukulong dito, bwisit.`,
-          `Ayan na, umalis na naman si ${ev.displayName}. Gulo mo today, teh.`
+          `Labas ulit si ${ev.displayName}. Teh, ano ba yan, pasok-labas ka parang sirang pinto bobo amputa.`,
+          `${ev.displayName} umalis nanaman si gago  Kalmahan mo, hindi ka makukulong dito, bwisit.`,
+          `Ayan na, umalis na naman si ${ev.displayName}. Gulo mo today, teh. may asin ba pwerta mo?`
         ]
         : [
-          `Umalis si ${ev.displayName}. Pwede na mag-backstab, charot.`,
+          `Umalis si ${ev.displayName}. Pwede na mag-backstab, kasi tanga talaga yon.`,
           `${ev.displayName} left. Tahimik na, pero mas masarap mang-lait.`,
           `Ayun umalis si ${ev.displayName}, next issue please.`
         ];
@@ -2737,14 +2756,14 @@ if (authorId === '669047995009859604') {
           `Gumawa ng ISANG VC group announcement line sa Taglish. Max 24 words, 1 sentence lang. ` +
           `Context: may sabay-sabay na movement sa voice channel. Pumasok: ${joinList}. Umalis: ${leaveList}. ` +
           `Rule: group-level lang, wag individual greetings kada tao. Dapat may vibe na nalilito siya kung sino ang babatiin kapag sabay-sabay. ` +
-          `Style: ${rageMode ? 'sobrang galit, mataray, may konting mura, funny kanal' : 'mataray, witty, mabilis'}. ` +
+          `Style: ${rageMode ? 'sobrang galit, mataray, may mura like gago, tarantado, tanga, bobo puta!, funny kanal' : 'mataray, witty, mabilis'}. ` +
           `Huwag ulitin ito: "${previous}". Walang paliwanag.`;
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
           model: 'llama-3.1-8b-instant',
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 90,
-          temperature: 1.0
+          max_tokens: 100,
+          temperature: 1.5
         }, {
           headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
           timeout: 4000
@@ -2873,7 +2892,3 @@ if (authorId === '669047995009859604') {
   });
 
 })(); // End of async IIFE
-
-
-
-
