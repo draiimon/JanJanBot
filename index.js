@@ -392,10 +392,11 @@ const {
     throw new Error('Leonardo: generation timeout.');
   }
 
-  async function leonardoGenerateAndSend({ channel, replyToMessage, prompt }) {
+  async function leonardoGenerateAndSend({ channel, replyToMessage, prompt, caption }) {
     if (!LEONARDO_API_KEY) throw new Error('LEONARDO_API_KEY missing.');
     const safePrompt = String(prompt || '').trim();
     if (!safePrompt) throw new Error('Missing prompt.');
+    const safeCaption = String(caption || '').trim();
 
     // Loading/progress message (simple but clear)
     const loadingBase = `wait ka lang ha, gumagawa na ko ng pic. wag kang atat.`;
@@ -425,9 +426,12 @@ const {
     const buf = Buffer.from(imgRes.data);
     const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
 
-    // Send final image message (Tagalog caption)
+    // Send final image message (Tagalog caption; avoid truncating)
+    const finalCaption = safeCaption
+      ? safeCaption.slice(0, 1800)
+      : `ayan na: **${safePrompt.slice(0, 140)}**`;
     await channel.send({
-      content: `ayan na: **${safePrompt.slice(0, 140)}**`,
+      content: finalCaption,
       files: [file]
     });
 
@@ -2950,7 +2954,7 @@ if (authorId === '669047995009859604') {
           }
 
           try {
-            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt });
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt, caption: `ayan na beh: **${prompt.slice(0, 140)}**` });
           } catch (e) {
             await message.reply(`Teh, di ko magawa yung pic ngayon. ${e.message}`);
           }
@@ -3010,9 +3014,15 @@ if (authorId === '669047995009859604') {
                 {
                   role: 'system',
                   content:
-                    'You are crafting an image prompt for Leonardo.ai. Output ONLY the prompt text, no labels. ' +
-                    'Make it vivid but safe. No raw Discord IDs. No sexual content. ' +
-                    'Prefer photoreal unless user asked otherwise. Keep under 280 chars.'
+                    'Create a Leonardo.ai image prompt + a Tagalog caption. Output STRICT JSON only.\n' +
+                    'JSON schema:\n' +
+                    '{ "leonardo_prompt_en": string, "prompt_idea_tl": string, "caption_tl": string, "basehan_tl": string }\n' +
+                    'Rules:\n' +
+                    '- No raw Discord IDs.\n' +
+                    '- No sexual content.\n' +
+                    '- leonardo_prompt_en must be ENGLISH, optimized, <= 280 chars.\n' +
+                    '- caption_tl + basehan_tl must be Tagalog/Taglish in JanJan persona (bading/maldita, witty) and COMPLETE.\n' +
+                    '- basehan_tl should say pano mo siya "nakilala": base sa stored memory + recent chat vibe.\n'
                 },
                 {
                   role: 'user',
@@ -3025,13 +3035,39 @@ if (authorId === '669047995009859604') {
                 }
               ],
               temperature: 0.6,
-              max_tokens: 120
+              max_tokens: 220
             });
 
-            const drafted = (promptDraftRes.data?.choices?.[0]?.message?.content || '').trim();
-            const finalPrompt = drafted.replace(/\s+/g, ' ').slice(0, 280) || `${displayName}, photoreal portrait in a gym, cinematic lighting`;
+            const raw = (promptDraftRes.data?.choices?.[0]?.message?.content || '').trim();
+            let leonardoPromptEn = '';
+            let promptIdeaTl = '';
+            let captionTl = '';
+            let basehanTl = '';
+            try {
+              const parsed = JSON.parse(raw);
+              leonardoPromptEn = String(parsed.leonardo_prompt_en || '').trim();
+              promptIdeaTl = String(parsed.prompt_idea_tl || '').trim();
+              captionTl = String(parsed.caption_tl || '').trim();
+              basehanTl = String(parsed.basehan_tl || '').trim();
+            } catch {
+              leonardoPromptEn = raw;
+            }
 
-            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt: finalPrompt });
+            const finalPrompt =
+              leonardoPromptEn.replace(/\s+/g, ' ').slice(0, 280) ||
+              `${displayName}, photoreal portrait, confident expression, modern gym background, cinematic lighting`;
+
+            const caption =
+              `${captionTl || `ayan na si ${displayName}, ganyan ko siya i-portray.`}\n` +
+              `${basehanTl ? `\nbasehan: ${basehanTl}` : `\nbasehan: base sa mga chat niya at sa vibes niya dito.`}` +
+              (promptIdeaTl ? `\nprompt idea: ${promptIdeaTl}` : '');
+
+            await leonardoGenerateAndSend({
+              channel: message.channel,
+              replyToMessage: message,
+              prompt: finalPrompt,
+              caption
+            });
           } catch (e) {
             await message.reply(`Teh, di ko ma-portray ngayon. ${e.message}`);
           }
@@ -3451,7 +3487,8 @@ if (authorId === '669047995009859604') {
             });
             const drafted = (promptDraftRes.data?.choices?.[0]?.message?.content || '').trim();
             const finalPrompt = drafted.replace(/\s+/g, ' ').slice(0, 280);
-            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt: finalPrompt });
+            const caption = `sorry, my bad. ${saidGender} nga si ${lastPortray.displayName}. ayan ulit, inayos ko na.`;
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt: finalPrompt, caption });
           } catch (e) {
             await message.reply(`teh, fail ulit. ${e.message}`);
           }
@@ -3467,7 +3504,7 @@ if (authorId === '669047995009859604') {
         const prompt = (imgMatch[4] || '').trim();
         if (prompt.length >= 3) {
           try {
-            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt });
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt, caption: `ayan mhie: **${prompt.slice(0, 140)}**` });
           } catch (e) {
             await message.reply(`Teh, fail yung pic. ${e.message}`);
           }
