@@ -2753,16 +2753,23 @@ if (authorId === '669047995009859604') {
 
             const prompt = hasWindow
               ? (
+                `JanJan persona ka pa rin (bading/maldita, taglish, witty). Wag formal report voice. ` +
                 `Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
                 `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
-                `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
-                `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n\n` +
+                `Output format ONLY:\n` +
+                `- 4-8 bullets (chika style, short)\n` +
+                `- 1 short paragraph: ano nangyari (taglish)\n` +
+                `- optional: 1-3 unresolved questions\n` +
+                `Rules: bawal maglagay ng "Recap:" or "Chat Summary:" labels. Bawal mag-imbento. If little happened, sabihin mo straight.\n\n` +
                 `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`
               )
               : (
-                `Summarize the LAST 10 messages in THIS CHANNEL (quick backread). ` +
-                `Output: 3-6 bullets + 1 short recap line. ` +
-                `Keep it concise.\n\n` +
+                `JanJan persona ka pa rin (bading/maldita, taglish, witty). Wag formal. ` +
+                `Quick backread: summarize the LAST 10 messages in THIS CHANNEL. ` +
+                `Output format ONLY:\n` +
+                `- 3-6 bullets (chika style)\n` +
+                `- 1 short line: ano vibe/ganap\n` +
+                `Rules: bawal "Recap:" label. Bawal mag-imbento.\n\n` +
                 `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`
               );
 
@@ -2886,9 +2893,7 @@ if (authorId === '669047995009859604') {
                 name: '🧠 SUMMARIZE / BACKREAD',
                 value:
                   '```' +
-                  'j!summarize\n' +
-                  'j!summarize 18:29 19:33\n' +
-                  'j!backread  18:29 19:33\n' +
+                  'j!summarize or j!backread\n' +
                   '```' +
                   'Bullets + short recap + unresolved questions (based sa backread).',
                 inline: false
@@ -2930,7 +2935,7 @@ if (authorId === '669047995009859604') {
                 inline: false
               }
             )
-            .setFooter({ text: 'JanJan Bot • created by drei • tip: j!admin (admins)' })
+            .setFooter({ text: 'JanJan Bot • created by Drei • tip: j!admin (admins)' })
             .setTimestamp();
 
           const examplesEmbed = new EmbedBuilder()
@@ -2939,7 +2944,7 @@ if (authorId === '669047995009859604') {
             .setDescription(
               '```' +
               '@JanJan Versa hi\n' +
-              'j!summarize 18:29 19:33\n' +
+              'j!summarize\n' +
               'kilala mo ba ko?\n' +
               'kilala mo ba si @Name?\n' +
               'j!checkdb\n' +
@@ -3166,7 +3171,7 @@ if (authorId === '669047995009859604') {
             `\n\n[SUMMARY REQUEST]: Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
             `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
             `IMPORTANT STYLE: Keep JanJan's bading/maldita persona while summarizing (taglish, witty, a bit sassy). ` +
-            `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
+            `Output format ONLY: 4-8 bullets + 1 short paragraph (ano nangyari) + optional unresolved questions. ` +
             `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n` +
             `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`;
 
