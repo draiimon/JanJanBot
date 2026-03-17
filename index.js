@@ -2718,6 +2718,68 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!summarize / j!backread — Summarize chat by time window (DB-grounded)
+        // Usage: j!summarize 18:29 19:33
+        if (command === 'summarize' || command === 'backread' || command === 'sumchat') {
+          const fromTime = (args[0] || '').trim();
+          const toTime = (args[1] || '').trim();
+          const timeOk = /^\d{1,2}:\d{2}$/.test(fromTime) && /^\d{1,2}:\d{2}$/.test(toTime);
+          if (!timeOk) {
+            await message.reply('Format: `j!summarize 18:29 19:33`');
+            return;
+          }
+
+          await message.channel.sendTyping();
+          try {
+            const rowsRes = await pool.query(
+              'SELECT author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 160',
+              [message.channel.id]
+            );
+            const rows = (rowsRes.rows || []).reverse();
+            const lines = rows
+              .map((r) => {
+                const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
+                const who = r.author_tag || 'someone';
+                const msg = (r.content || '').replace(/\s+/g, ' ').trim();
+                if (!msg) return null;
+                return `[${ts}] ${who}: ${msg}`;
+              })
+              .filter(Boolean)
+              .slice(-120);
+
+            const prompt =
+              `Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
+              `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
+              `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
+              `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n\n` +
+              `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`;
+
+            const discordContext = await buildDiscordAwarenessContext(message, false);
+            const mentionContext = buildMentionContext(message);
+            const voiceMembers = [];
+            const summary = await callGroqChat(prompt, message.author.id, message.channel.id, voiceMembers, {
+              fastMode: false,
+              researchContext: [],
+              discordContext,
+              mentionContext,
+              forceResearchGrounding: false,
+              forceSexualGuard: false
+            });
+
+            const out = summary || 'Teh, may error sa summary. Try ulit mamaya.';
+            const embed = new EmbedBuilder()
+              .setColor(0x7B61FF)
+              .setTitle('🧠 BACKREAD SUMMARY')
+              .setDescription(out)
+              .setFooter({ text: `Window: ${fromTime} → ${toTime} • #${message.channel.name}` })
+              .setTimestamp();
+            await message.reply({ embeds: [embed] });
+          } catch (e) {
+            await message.reply(`Teh, di ko ma-backread ngayon. Error: ${e.message}`);
+          }
+          return;
+        }
+
         // j!admin â€” show admin command list
         if (command === 'admin' || command === 'commandslist') {
           const adminEmbed = new EmbedBuilder()
@@ -2784,7 +2846,7 @@ if (authorId === '669047995009859604') {
 
         // j!help / j!tulong
         if (command === 'help' || command === 'tulong') {
-          const helpEmbed = new EmbedBuilder()
+          const menuEmbed = new EmbedBuilder()
             .setColor(0xFF4D8D)
             .setAuthor({
               name: 'JANJAN • COMMAND MENU',
@@ -2792,8 +2854,14 @@ if (authorId === '669047995009859604') {
             })
             .setThumbnail(client.user.displayAvatarURL({ dynamic: true }))
             .setDescription(
-              '**How to talk to me:** mention/reply sakin para mag-chika tayo.\n' +
-              '**Auto-epal:** minsan sasabat ako kahit di ako minention (server rules + cooldown apply).'
+              '**quick start**\n' +
+              '- mention/reply sakin para mag-chika\n' +
+              '- minsan sasabat ako kahit di ako tinatanong, pake mo ba?\n' +
+              '- gusto mo tumigil ako sa epal? `j!tulog on`\n' +
+              '\n' +
+              '**notes**\n' +
+              '- summaries/backread = db-based (walang sources, walang web)\n' +
+              '- i keep chat emojis near-zero; reactions ang expressive'
             )
             .addFields(
               {
@@ -2810,9 +2878,10 @@ if (authorId === '669047995009859604') {
                 name: '🧠 SUMMARIZE / BACKREAD',
                 value:
                   '```' +
-                  'summarize chat from 18:29 to 19:33\n' +
+                  'j!summarize 18:29 19:33\n' +
+                  'j!backread  18:29 19:33\n' +
                   '```' +
-                  'Gagawa ako ng bullets + short recap + unresolved questions (grounded sa DB backread).',
+                  'Bullets + short recap + unresolved questions (grounded sa DB backread).',
                 inline: false
               },
               {
@@ -2852,10 +2921,24 @@ if (authorId === '669047995009859604') {
                 inline: false
               }
             )
-            .setFooter({ text: 'JanJan Bot • created by drei • j!tulong' })
+            .setFooter({ text: 'JanJan Bot • created by drei • tip: j!admin (admins)' })
             .setTimestamp();
 
-          await message.reply({ embeds: [helpEmbed] });
+          const examplesEmbed = new EmbedBuilder()
+            .setColor(0x7B61FF)
+            .setTitle('📋 EXAMPLES (copy-paste)')
+            .setDescription(
+              '```' +
+              '@JanJan Versa hi\n' +
+              'j!summarize 18:29 19:33\n' +
+              'kilala mo ba ko?\n' +
+              'kilala mo ba si @Name?\n' +
+              'j!checkdb\n' +
+              '```'
+            )
+            .setFooter({ text: 'Pro tip: gamitin `j!permcheck` pag di ako nakikita sa channel.' });
+
+          await message.reply({ embeds: [menuEmbed, examplesEmbed] });
           return;
         }
 
@@ -3048,6 +3131,7 @@ if (authorId === '669047995009859604') {
       // Explicit summarize requests: pull recent channel messages with timestamps.
       // This prevents JanJan from being dismissive and forces a real summary grounded in backread.
       const summarizeMatch = content.match(/summarize\s+chat\s+from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})/i);
+      const isBackreadSummaryRequest = Boolean(summarizeMatch) || /\b(j!summarize|j!backread)\b/i.test(message.content || '');
       if (summarizeMatch && message.channel?.id) {
         const fromTime = summarizeMatch[1];
         const toTime = summarizeMatch[2];
@@ -3071,6 +3155,7 @@ if (authorId === '669047995009859604') {
           const summaryContext =
             `\n\n[SUMMARY REQUEST]: Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
             `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
+            `IMPORTANT STYLE: Keep JanJan's bading/maldita persona while summarizing (taglish, witty, a bit sassy). ` +
             `Output: 4-8 bullets + 1 short "what happened" paragraph + any unresolved questions. ` +
             `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n` +
             `[BACKREAD TRANSCRIPT]\n${lines.join('\n')}\n`;
@@ -3090,7 +3175,8 @@ if (authorId === '669047995009859604') {
 
       const sexualGuardMode = isSexualEscalationText(content);
 
-      const researchMode = shouldUseResearchMode(content);
+      // Never use web research for backread/summarize; it must be grounded in DB transcript/history.
+      const researchMode = isBackreadSummaryRequest ? false : shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
       const discordContext = await buildDiscordAwarenessContext(message, fastMode);
       const mentionContext = buildMentionContext(message);
