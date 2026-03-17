@@ -59,6 +59,7 @@ function loadConfig(env = process.env) {
     databaseUrl: env.DATABASE_URL || '',
     tavilyApiKey: env.TAVILY_API_KEY || '',
     groqKeys,
+    leonardoApiKey: env.LEONARDO_API_KEY ? String(env.LEONARDO_API_KEY).trim() : '',
     port: parseInteger(env.PORT, 3000),
     publicBaseUrl,
     selfPingEnabled: parseBoolean(env.SELF_PING_ENABLED, Boolean(publicBaseUrl)),

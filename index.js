@@ -3181,6 +3181,22 @@ if (authorId === '669047995009859604') {
         content = content.replace(okMetaPattern, '').replace(/\s{2,}/g, ' ').trim() || content;
       }
 
+      // Anti-repeat guard: if JanJan is looping a motif, force a fresh angle.
+      // Pull last JanJan reply in this channel and tell the model to avoid reusing it.
+      try {
+        const lastBotRes = await pool.query(
+          'SELECT content FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 1',
+          [message.channel.id, client.user.id]
+        );
+        const lastBotText = (lastBotRes.rows?.[0]?.content || '').trim();
+        if (lastBotText) {
+          content =
+            `${content}\n\n[ANTI-REPEAT GUARD]: Do NOT repeat or paraphrase your last reply. ` +
+            `Avoid reusing the same brag/story/motif. Shift focus to the user's latest message and ask 1 new question.\n` +
+            `[YOUR LAST REPLY]: ${lastBotText.slice(0, 500)}`;
+        }
+      } catch { }
+
       // Always store user facts on interaction so summaries work
       if (isMention || isReplyToBot || shouldAutoChat) {
         const displayAuthor =
@@ -3329,7 +3345,8 @@ if (authorId === '669047995009859604') {
           `Backread the last messages in the channel first (use the conversation history). ` +
           `Then do a natural chat-interaction: react (e.g., taena/WAHAHAHA/DAFUQ/funny ka teh), and if something is funny, laugh genuinely. ` +
           `Reply to ONE specific point/person you saw in the backread (use their nickname), then keep it moving with 1 short follow-up question. ` +
-          `Sometimes (not always) add a short mini-story or a big lie (mayabang) where ikaw ang bida/main character, but still connected to what they were talking about. ` +
+          `Optional: add a short mini-story minsan, pero wag gawing ikaw palagi ang topic. Mas focus sa kausap. ` +
+          `ANTI-REPEAT: bawal paulit-ulit na same brag/story. If you already used a brag earlier, drop it and move on. ` +
           `Keep it short and not formal.\n\n` +
           `Name-trigger message you are reacting to: ${rawContent}`;
       }
