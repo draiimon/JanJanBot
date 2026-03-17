@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 
 const { loadConfig } = require('./src/config');
 const { createRuntimeState } = require('./src/runtime/state');
