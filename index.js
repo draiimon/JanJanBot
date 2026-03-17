@@ -12,6 +12,7 @@ const runtimeState = createRuntimeState(config);
 const DISCORD_TOKEN = config.discordToken;
 const TAVILY_API_KEY = config.tavilyApiKey;
 const GROQ_KEYS = config.groqKeys;
+const LEONARDO_API_KEY = config.leonardoApiKey;
 
 if (config.missing.length > 0) {
   console.error(`Missing required environment variables: ${config.missing.join(', ')}`);
@@ -51,6 +52,7 @@ const {
   const fs = require('fs');
   const path = require('path');
   const { spawn } = require('child_process');
+  const { AttachmentBuilder } = require('discord.js');
 
   // TTS Queue System (per guild) â€” same as gnslgbot2
   const ttsQueues = new Map(); // guildId -> [{text, userId}]
@@ -327,6 +329,65 @@ const {
       }
     }
     throw new Error('All Groq keys exhausted.');
+  }
+
+  // ============================================================
+  // LEONARDO IMAGE GENERATION
+  // ============================================================
+  const LEONARDO_BASE_URL = 'https://cloud.leonardo.ai/api/rest/v1';
+  const LEONARDO_DEFAULT_MODEL_ID = '7b592283-e8a7-4c5a-9ba6-d18c31f258b9';
+
+  async function leonardoCreateGeneration(prompt, options = {}) {
+    if (!LEONARDO_API_KEY) throw new Error('LEONARDO_API_KEY missing.');
+    const payload = {
+      prompt: String(prompt || '').slice(0, 1500),
+      modelId: options.modelId || LEONARDO_DEFAULT_MODEL_ID,
+      width: options.width ?? 1024,
+      height: options.height ?? 1024,
+      num_images: options.numImages ?? 1,
+      alchemy: Boolean(options.alchemy ?? false),
+      ultra: Boolean(options.ultra ?? false)
+    };
+
+    const res = await axios.post(`${LEONARDO_BASE_URL}/generations`, payload, {
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${LEONARDO_API_KEY}`,
+        'content-type': 'application/json'
+      },
+      timeout: 30000
+    });
+
+    const generationId = res.data?.sdGenerationJob?.generationId || res.data?.generationId || null;
+    if (!generationId) throw new Error('Leonardo: missing generationId.');
+    return generationId;
+  }
+
+  async function leonardoGetGeneration(generationId) {
+    if (!LEONARDO_API_KEY) throw new Error('LEONARDO_API_KEY missing.');
+    const res = await axios.get(`${LEONARDO_BASE_URL}/generations/${generationId}`, {
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${LEONARDO_API_KEY}`
+      },
+      timeout: 30000
+    });
+    return res.data;
+  }
+
+  async function leonardoWaitForImages(generationId, { maxWaitMs = 90000, pollMs = 2500 } = {}) {
+    const started = Date.now();
+    while (Date.now() - started < maxWaitMs) {
+      const data = await leonardoGetGeneration(generationId);
+      const pk = data?.generations_by_pk || null;
+      const status = pk?.status || null;
+      const imgs = Array.isArray(pk?.generated_images) ? pk.generated_images : [];
+      const urls = imgs.map((i) => i?.url).filter(Boolean);
+      if (urls.length > 0) return urls;
+      if (status === 'FAILED') throw new Error('Leonardo: generation failed.');
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    throw new Error('Leonardo: generation timeout.');
   }
 
   async function performChatRequest(payload, options = {}) {
@@ -2797,6 +2858,40 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!img — generate an image via Leonardo
+        // Usage: j!img <prompt>
+        if (command === 'img' || command === 'image' || command === 'pic' || command === 'picture') {
+          const prompt = args.join(' ').trim();
+          if (!prompt) {
+            await message.reply('Format: `j!img <prompt>`');
+            return;
+          }
+          if (!LEONARDO_API_KEY) {
+            await message.reply('Teh, wala pang `LEONARDO_API_KEY` sa .env. Lagay mo muna.');
+            return;
+          }
+
+          await message.channel.sendTyping();
+          try {
+            const generationId = await leonardoCreateGeneration(prompt, { numImages: 1, width: 1024, height: 1024 });
+            const urls = await leonardoWaitForImages(generationId, { maxWaitMs: 120000, pollMs: 2500 });
+            const url = urls[0];
+            if (!url) throw new Error('No image URL returned.');
+
+            const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
+            const buf = Buffer.from(imgRes.data);
+            const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
+
+            await message.reply({
+              content: `eto na beh: **${prompt.slice(0, 140)}**`,
+              files: [file]
+            });
+          } catch (e) {
+            await message.reply(`Teh, di ko magawa yung pic ngayon. ${e.message}`);
+          }
+          return;
+        }
+
         // j!summarize / j!backread — Summarize chat (DB-grounded)
         // Usage:
         //   j!summarize              -> last 10 messages (quick)
@@ -2964,6 +3059,7 @@ if (authorId === '669047995009859604') {
                   '```' +
                   'j!view @User        - chika profile\n' +
                   'j!usersummary @User - summary ng tao (DB)\n' +
+                  'j!img <prompt>      - generate picture\n' +
                   '```' +
                   '**No command needed:** “kilala mo ba ko?” / “kilala mo ba si @X?” (based sa naaalala ko)',
                 inline: false
@@ -3173,6 +3269,28 @@ if (authorId === '669047995009859604') {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
       }
 
+      // Natural image request (mention/reply mode): "send ka picture ng ..."
+      // Converts to Leonardo generation and replies with an attachment.
+      const imgMatch = content.match(/\b(send|gawa|generate|create)\b[\s\S]{0,20}\b(picture|pic|image|larawan)\b[\s\S]{0,10}\b(ng|of|na)\b[\s:,-]*(.+)$/i);
+      if (imgMatch && (isMention || isReplyToBot) && LEONARDO_API_KEY) {
+        const prompt = (imgMatch[4] || '').trim();
+        if (prompt.length >= 3) {
+          await message.channel.sendTyping();
+          try {
+            const generationId = await leonardoCreateGeneration(prompt, { numImages: 1, width: 1024, height: 1024 });
+            const urls = await leonardoWaitForImages(generationId, { maxWaitMs: 120000, pollMs: 2500 });
+            const url = urls[0];
+            const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
+            const buf = Buffer.from(imgRes.data);
+            const file = new AttachmentBuilder(buf, { name: 'janjan.png' });
+            await message.reply({ content: `ayan mhie: **${prompt.slice(0, 140)}**`, files: [file] });
+          } catch (e) {
+            await message.reply(`Teh, fail yung pic. ${e.message}`);
+          }
+          return;
+        }
+      }
+
       // If user adds a meta-instruction like "reply okay if connected",
       // treat it as a connectivity hint but still reply normally.
       const okMetaPattern =
@@ -3181,19 +3299,37 @@ if (authorId === '669047995009859604') {
         content = content.replace(okMetaPattern, '').replace(/\s{2,}/g, ' ').trim() || content;
       }
 
-      // Anti-repeat guard: if JanJan is looping a motif, force a fresh angle.
-      // Pull last JanJan reply in this channel and tell the model to avoid reusing it.
+      // Anti-repeat + naturalness guard: if JanJan is looping, force variety and user-focus.
+      // Pull last few JanJan replies + last few user messages for context and "do not repeat" rules.
       try {
         const lastBotRes = await pool.query(
-          'SELECT content FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 1',
+          'SELECT content FROM messages WHERE channel_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 3',
           [message.channel.id, client.user.id]
         );
-        const lastBotText = (lastBotRes.rows?.[0]?.content || '').trim();
-        if (lastBotText) {
+        const lastUserRes = await pool.query(
+          'SELECT author_tag, content FROM messages WHERE channel_id = $1 AND author_id <> $2 ORDER BY created_at DESC LIMIT 3',
+          [message.channel.id, client.user.id]
+        );
+
+        const lastBotTexts = (lastBotRes.rows || [])
+          .map((r) => String(r.content || '').trim())
+          .filter(Boolean)
+          .map((t) => t.slice(0, 220));
+        const lastUserTexts = (lastUserRes.rows || [])
+          .map((r) => `${String(r.author_tag || 'user').trim()}: ${String(r.content || '').trim()}`)
+          .filter(Boolean)
+          .map((t) => t.replace(/\s+/g, ' ').slice(0, 220));
+
+        if (lastBotTexts.length > 0 || lastUserTexts.length > 0) {
           content =
-            `${content}\n\n[ANTI-REPEAT GUARD]: Do NOT repeat or paraphrase your last reply. ` +
-            `Avoid reusing the same brag/story/motif. Shift focus to the user's latest message and ask 1 new question.\n` +
-            `[YOUR LAST REPLY]: ${lastBotText.slice(0, 500)}`;
+            `${content}\n\n[NATURAL CHAT GUARD]:\n` +
+            `- bawal paulit-ulit (opener, punchline, brag, tanong)\n` +
+            `- wag laging "WAHAHAHA" opener; mix it up (hala/luh/jusko/kaloka/sige/teh)\n` +
+            `- wag ikaw lagi ang topic; reply to user's latest point\n` +
+            `- 1 main point + 1 follow-up question max\n` +
+            `- if user says "paulit ulit", acknowledge and switch topic\n` +
+            (lastBotTexts.length ? `\n[YOUR LAST 3 REPLIES]:\n- ${lastBotTexts.join('\n- ')}` : '') +
+            (lastUserTexts.length ? `\n\n[RECENT USER MESSAGES]:\n- ${lastUserTexts.join('\n- ')}` : '');
         }
       } catch { }
 
@@ -3343,10 +3479,10 @@ if (authorId === '669047995009859604') {
         content =
           `AUTO-INTERACT MODE (NOT SPAM): You decided to join the conversation because your name was mentioned ("${rawContent}"). ` +
           `Backread the last messages in the channel first (use the conversation history). ` +
-          `Then do a natural chat-interaction: react (e.g., taena/WAHAHAHA/DAFUQ/funny ka teh), and if something is funny, laugh genuinely. ` +
+          `Then do a natural chat-interaction: react in a varied way (wag laging WAHAHAHA; pwede hala/luh/jusko/kaloka/sige/teh). ` +
           `Reply to ONE specific point/person you saw in the backread (use their nickname), then keep it moving with 1 short follow-up question. ` +
-          `Optional: add a short mini-story minsan, pero wag gawing ikaw palagi ang topic. Mas focus sa kausap. ` +
-          `ANTI-REPEAT: bawal paulit-ulit na same brag/story. If you already used a brag earlier, drop it and move on. ` +
+          `Optional: mini-story minsan lang, and dapat related + hindi ikaw lagi ang topic. ` +
+          `ANTI-REPEAT: bawal paulit-ulit na same opener/brag/joke/question. If user calls you out for repeating, apologize briefly and switch angle. ` +
           `Keep it short and not formal.\n\n` +
           `Name-trigger message you are reacting to: ${rawContent}`;
       }
