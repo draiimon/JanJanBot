@@ -61,6 +61,29 @@ const {
   const aiChannelQueueDepths = new Map();
   const aiChannelLatestToken = new Map(); // channelId -> token (latest task only)
   const autoChatCooldowns = new Map(); // scopeKey -> lastAutoChatMs (guild-wide; DM fallback)
+  const priorityAutoChatChannels = new Set([
+    '1426746103797256200',
+    '1427128206431096913',
+    '1426746103797256195'
+  ]);
+
+  function getMissingTextPermsForChannel(channel) {
+    if (!channel || !channel.guild) return ['unknown-channel'];
+    const meMember = channel.guild.members?.me || null;
+    if (!meMember) return ['bot-not-in-guild-cache'];
+    const perms = channel.permissionsFor(meMember);
+    if (!perms) return ['cannot-resolve-permissions'];
+
+    const required = [
+      PermissionsBitField.Flags.ViewChannel,
+      PermissionsBitField.Flags.ReadMessageHistory,
+      PermissionsBitField.Flags.SendMessages,
+      PermissionsBitField.Flags.AddReactions
+    ];
+
+    const missing = required.filter((p) => !perms.has(p));
+    return missing.map((p) => PermissionsBitField.Flags[p] || String(p));
+  }
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -1360,6 +1383,25 @@ const {
     await setBotCustomStatus('BADING KABA ? BAWAL ABDING DITO!');
     startScheduledGreetings();
 
+    // Permission diagnostics for priority auto-chat channels
+    try {
+      for (const chId of priorityAutoChatChannels) {
+        const ch = await client.channels.fetch(chId).catch(() => null);
+        if (!ch || !ch.isTextBased?.()) {
+          console.warn(`[PERM] Priority channel ${chId}: not found or not text-based.`);
+          continue;
+        }
+        const missing = getMissingTextPermsForChannel(ch);
+        if (missing.length > 0 && missing[0] !== 'unknown-channel') {
+          console.warn(`[PERM] Missing perms in #${ch.name} (${chId}): ${missing.join(', ')}`);
+        } else {
+          console.log(`[PERM] OK in #${ch.name} (${chId})`);
+        }
+      }
+    } catch (e) {
+      console.warn('[PERM] Priority channel permission check failed:', e.message);
+    }
+
     // =====================================================================
     // 24/7 AUTO-JOIN ON STARTUP â€” load saved voice state from DB
     // =====================================================================
@@ -1911,6 +1953,30 @@ if (authorId === '669047995009859604') {
         await message.react(emoji).catch(() => { });
       }
 
+      function keepChikaEmojisLight(text) {
+        // Keep chat replies basically emoji-free.
+        // Only ~2% chance to append ONE chika-relevant emoji.
+        const raw = (text || '').trim();
+        if (!raw) return raw;
+
+        // Strip ALL pictographic emojis from model output
+        let cleaned = raw.replace(/[\p{Extended_Pictographic}]/gu, '');
+        cleaned = cleaned.replace(/\s{2,}/g, ' ').trim();
+
+        if (Math.random() >= 0.02) return cleaned;
+
+        const lower = cleaned.toLowerCase();
+        let addon = '💅';
+        if (/(haha|hehe|lol|lmao|tawa|wa(h)+)/i.test(lower)) addon = '😂';
+        else if (/[!?]{2,}/.test(cleaned)) addon = '🤯';
+        else if (/\?/.test(cleaned)) addon = '🤨';
+        else if (/(sad|iyak|cry|lungkot)/i.test(lower)) addon = '😢';
+        else if (/(slay|werk|bongga|pak na pak)/i.test(lower)) addon = '✨';
+        else if (/(inis|bwisit|galit|as in)/i.test(lower)) addon = '😤';
+
+        return `${cleaned} ${addon}`.trim();
+      }
+
       // Save message to DB regardless of AI trigger
       try {
         const displayAuthor =
@@ -2394,6 +2460,37 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!permcheck — Admin-only permission diagnostics for current channel
+        if (command === 'permcheck') {
+          if (!message.guild) {
+            await message.reply('Teh, pang-server lang to. Walang perms-perms sa DM.');
+            return;
+          }
+          const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+          if (!isAdmin) {
+            await message.reply('Admins lang pwede mag-permcheck dito, ghorl.');
+            return;
+          }
+
+          const ch = message.channel;
+          const missing = getMissingTextPermsForChannel(ch);
+          const ok = missing.length === 0 || missing[0] === 'unknown-channel';
+          const base =
+            `Channel: <#${ch.id}>\n` +
+            `Bot: ${client.user.tag}\n` +
+            `Result: ${ok ? 'OK' : 'MISSING'}`;
+
+          if (ok) {
+            await message.reply(`${base}\nPerms: OK na. Kung di pa rin siya nakaka-backread, check Developer Portal > Message Content Intent.`);
+          } else {
+            await message.reply(
+              `${base}\nMissing: ${missing.join(', ')}\n` +
+              `Ayusin sa channel overrides/role perms. Also: Developer Portal > Message Content Intent must be ON.`
+            );
+          }
+          return;
+        }
+
         // j!admin â€” show admin command list
         if (command === 'admin' || command === 'commandslist') {
           const adminEmbed = new EmbedBuilder()
@@ -2463,6 +2560,7 @@ if (authorId === '669047995009859604') {
             'Ghorl, eto ang menu ni JanJan:\n' +
             '- `j!view @User` - Chika profile ng isang tao\n' +
             '- `j!admin` - Admin command list (Para sa mga bida-bida)\n' +
+            '- `j!permcheck` - Check permissions sa channel (Admin only)\n' +
             '- Mention/Reply - Mag-chikahan tayo!\n\n' +
             'Walang formal tutorial dito, ghorl. Discovery is the way! Charot.';
           await message.reply(replyText);
@@ -2502,7 +2600,8 @@ if (authorId === '669047995009859604') {
       const nowMs = Date.now();
       const autoChatScopeKey = message.guild?.id ? `guild:${message.guild.id}` : `dm:${message.channel.id}`;
       const lastAuto = autoChatCooldowns.get(autoChatScopeKey) || 0;
-      const AUTO_CHAT_COOLDOWN_MS = 75 * 1000;
+      const isPriorityChannel = priorityAutoChatChannels.has(message.channel.id);
+      const AUTO_CHAT_COOLDOWN_MS = isPriorityChannel ? 45 * 1000 : 75 * 1000;
       const autoChatEligible = (nowMs - lastAuto) >= AUTO_CHAT_COOLDOWN_MS;
       const looksLowSignal =
         !rawContent ||
@@ -2511,8 +2610,8 @@ if (authorId === '669047995009859604') {
 
       // "Epal mode": can auto-interject sometimes even without mention/keyword,
       // but stays rare + cooldown-protected to avoid spam.
-      const baseAutoChatChance = 0.025; // ~2.5% when eligible
-      const autoChatChance = mentionsJanJanName ? 0.22 : baseAutoChatChance;
+      const baseAutoChatChance = isPriorityChannel ? 0.75 : 0.5; // 50% base, higher in priority channels
+      const autoChatChance = mentionsJanJanName ? 1.0 : baseAutoChatChance; // 100% when name is mentioned
       const shouldAutoChat =
         !rawContent.startsWith(prefix) &&
         !looksLowSignal &&
@@ -2550,7 +2649,11 @@ if (authorId === '669047995009859604') {
       }
 
       // Light persona reaction for mentions/replies (no spam)
-      await maybeReactPersona(message, content, shouldAutoChat ? 0.12 : (isReplyToBot ? 0.2 : 0.35));
+      await maybeReactPersona(
+        message,
+        content,
+        shouldAutoChat ? 1.0 : (isMention || isReplyToBot ? 0.9 : 0.35)
+      );
 
       const sexualGuardMode = isSexualEscalationText(content);
 
@@ -2625,7 +2728,8 @@ if (authorId === '669047995009859604') {
         const finalReply = sourceLines.length > 0
           ? `${reply}\n\nSources:\n${sourceLines.join('\n')}`
           : reply;
-        const safeReply = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
+        const safeReplyRaw = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
+        const safeReply = keepChikaEmojisLight(safeReplyRaw);
 
         await message.reply(safeReply);
 
