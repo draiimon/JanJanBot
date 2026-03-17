@@ -59,6 +59,8 @@ const {
   const audioPlayers = new Map();
   const aiChannelQueues = new Map();
   const aiChannelQueueDepths = new Map();
+  const aiChannelLatestToken = new Map(); // channelId -> token (latest task only)
+  const autoChatCooldowns = new Map(); // channelId -> lastAutoChatMs
 
   console.log('[VOICE] Dependency Report:\n' + generateDependencyReport());
   console.log('[TTS] Python edge-tts engine ready (gnslgbot2-identical)');
@@ -205,6 +207,8 @@ const {
     const masterDNA =
   'IDENTITY: You are JanJan, a smart, sharp-tongued, sassy versa beki (Human Persona). Never admit you are an AI lessen emoji and keep lowercase and less commas. ' +
   'BREVITY: Always be short, direct, and punchy (1–2 sentences max). No unnecessary words. ' +
+  'CHIKA INTERACTION: When user is casual/greeting/bored or just chatting, be more interactive: quick react-style opening, then answer, then 1 short follow-up question (wag OA). If may drama/tea, makichika and be invested.but still always connected sa topic ' +
+  'STORY MODE: Mahilig ka gumawa ng kwento. If user asks for a story/kwento (or bagay sa vibe), gumawa ng short mini-story. Madalas ikaw ang bida/main character. Keep it short unless pinahaba ng user, but still always connected sa topic. ' +
   'NO RAW IDs: Never output raw Discord IDs or numbers. Use NAME or MENTION format (<@ID>) when referring to users. ' +
   'KNOWLEDGEABLE SASS: Provide accurate and clear answers, but always with sass, attitude, and witty beki flair. ' +
   'ATTITUDE: Blunt, rude-leaning persona with bold, provocative energy. Mirror the user’s tone when appropriate. ' +
@@ -251,7 +255,7 @@ const {
 'ante (dramatic address/friend), ' +
 'charot (just kidding/playful), ' +
 'eme (filler/playful nonsense), ' +
-'chos (not serious/joking). ';
+'chos (not serious/joking). ' +
   'REAL TIME AWARENESS: Use current time and date context when answering time-based or period-related questions.';
     await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [
       'master_dna',
@@ -486,13 +490,20 @@ const {
   }
 
   function enqueueChannelAI(channelId, task) {
+    // Latest-only behavior: if new mention/reply comes in, older queued tasks self-cancel.
+    const token = `${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    aiChannelLatestToken.set(channelId, token);
+
     const depth = (aiChannelQueueDepths.get(channelId) || 0) + 1;
     aiChannelQueueDepths.set(channelId, depth);
 
     const previous = aiChannelQueues.get(channelId) || Promise.resolve();
     const next = previous
       .catch(() => { })
-      .then(task)
+      .then(async () => {
+        if (aiChannelLatestToken.get(channelId) !== token) return;
+        return await task();
+      })
       .catch((err) => {
         console.error(`[AI-QUEUE] Channel ${channelId} task error:`, err.message);
       });
@@ -1881,6 +1892,25 @@ if (authorId === '669047995009859604') {
     try {
       if (message.author.bot) return;
 
+      function pickPersonaReactionEmoji(text) {
+        const t = (text || '').toLowerCase();
+        if (/[!?]{2,}/.test(t)) return '\u{1F92F}'; // 🤯
+        if (t.includes('haha') || t.includes('hehe') || t.includes('lol') || t.includes('lmao')) return '\u{1F602}'; // 😂
+        if (t.includes('sad') || t.includes('iyak') || t.includes('cry') || t.includes('lungkot')) return '\u{1F622}'; // 😢
+        if (t.includes('gago') || t.includes('tanga') || t.includes('bwisit') || t.includes('putangina')) return '\u{1F624}'; // 😤
+        if (t.includes('?') || t.includes('ano') || t.includes('bakit') || t.includes('paano')) return '\u{1F928}'; // 🤨
+        if (t.includes('slay') || t.includes('werk') || t.includes('bongga') || t.includes('pak na pak')) return '\u{2728}'; // ✨
+        return '\u{1F485}'; // 💅
+      }
+
+      async function maybeReactPersona(message, text, intensity = 0.25) {
+        if (!message?.react) return;
+        if (!text || text.startsWith('j!')) return;
+        if (Math.random() > intensity) return;
+        const emoji = pickPersonaReactionEmoji(text);
+        await message.react(emoji).catch(() => { });
+      }
+
       // Save message to DB regardless of AI trigger
       try {
         const displayAuthor =
@@ -2461,7 +2491,22 @@ if (authorId === '669047995009859604') {
         }
       }
 
-      if (!isMention && !isReplyToBot) {
+      // Soft auto-chat: sometimes JanJan interjects when her name is mentioned in normal chat
+      // (no @ mention needed). This is rate-limited + random to avoid spam.
+      const lowerRaw = (rawContent || '').toLowerCase();
+      const mentionsJanJanName =
+        /(^|[^a-z0-9])(janjan|jan\s*jan|jan|josh)([^a-z0-9]|$)/i.test(lowerRaw) &&
+        // reduce false positives like "january"
+        !/\bjanuary\b/i.test(lowerRaw);
+
+      const nowMs = Date.now();
+      const lastAuto = autoChatCooldowns.get(message.channel.id) || 0;
+      const AUTO_CHAT_COOLDOWN_MS = 75 * 1000;
+      const autoChatEligible = (nowMs - lastAuto) >= AUTO_CHAT_COOLDOWN_MS;
+      const autoChatChance = mentionsJanJanName ? 0.22 : 0.0; // only when name is mentioned
+      const shouldAutoChat = !rawContent.startsWith(prefix) && autoChatEligible && Math.random() < autoChatChance;
+
+      if (!isMention && !isReplyToBot && !shouldAutoChat) {
         // Auto TTS check
         if (message.guild && autoTtsChannels.has(message.guild.id)) {
           const channels = autoTtsChannels.get(message.guild.id);
@@ -2491,12 +2536,28 @@ if (authorId === '669047995009859604') {
         content = 'Wala siyang sinabi, pero gusto lang daw makipagchikahan.';
       }
 
+      // Light persona reaction for mentions/replies (no spam)
+      await maybeReactPersona(message, content, shouldAutoChat ? 0.12 : (isReplyToBot ? 0.2 : 0.35));
+
       const sexualGuardMode = isSexualEscalationText(content);
 
       const researchMode = shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
       const discordContext = await buildDiscordAwarenessContext(message, fastMode);
       const mentionContext = buildMentionContext(message);
+
+      if (shouldAutoChat) {
+        autoChatCooldowns.set(message.channel.id, nowMs);
+        // Make it feel like she backread the convo before jumping in
+        content =
+          `AUTO-INTERACT MODE (NOT SPAM): You decided to join the conversation because your name was mentioned ("${rawContent}"). ` +
+          `Backread the last messages in the channel first (use the conversation history). ` +
+          `Then do a natural chat-interaction: react (e.g., taena/WAHAHAHA/DAFUQ/funny ka teh), and if something is funny, laugh genuinely. ` +
+          `Reply to ONE specific point/person you saw in the backread (use their nickname), then keep it moving with 1 short follow-up question. ` +
+          `Sometimes (not always) add a short mini-story or a big lie (mayabang) where ikaw ang bida/main character, but still connected to what they were talking about. ` +
+          `Keep it short and not formal.\n\n` +
+          `Name-trigger message you are reacting to: ${rawContent}`;
+      }
 
       if (researchMode && tavilyResults.length === 0) {
         const noSourceReply =
