@@ -3073,6 +3073,7 @@ if (authorId === '669047995009859604') {
       const isKnowTargetPrompt =
         /\b(kilala\s+mo\s+ba\s+(si|ito|to)|kilala\s+mo\s+ba\s+yan|do\s+you\s+know\s+him|do\s+you\s+know\s+her|do\s+you\s+know\s+this)\b/i
           .test(lowerContent);
+      const isPersonMemoryRequest = Boolean(isWhoAmIPrompt || isKnowTargetPrompt);
 
       if ((isWhoAmIPrompt || isKnowTargetPrompt) && message.channel?.id) {
         const targets = [];
@@ -3184,8 +3185,9 @@ if (authorId === '669047995009859604') {
 
       const sexualGuardMode = isSexualEscalationText(content);
 
-      // Never use web research for backread/summarize; it must be grounded in DB transcript/history.
-      const researchMode = isBackreadSummaryRequest ? false : shouldUseResearchMode(content);
+      // Never use web research for backread/summarize or person-memory requests.
+      // These must be grounded in channel history / stored memory only (no "Sources:" spam).
+      const researchMode = (isBackreadSummaryRequest || isPersonMemoryRequest) ? false : shouldUseResearchMode(content);
       const tavilyResults = researchMode ? await searchWithTavily(content, fastMode ? 3 : 5) : [];
       const discordContext = await buildDiscordAwarenessContext(message, fastMode);
       const mentionContext = buildMentionContext(message);
