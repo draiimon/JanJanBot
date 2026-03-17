@@ -64,6 +64,7 @@ const {
   const aiChannelLatestToken = new Map(); // channelId -> token (latest task only)
   const autoChatCooldowns = new Map(); // scopeKey -> lastAutoChatMs (guild-wide; DM fallback)
   const sleepGuilds = new Set(); // guildId -> sleep mode for auto-interact
+  const researchEnabledGuilds = new Set(); // guildId -> allow web research + sources (admin toggled)
   const priorityAutoChatChannels = new Set([
     '1426746103797256200',
     '1427128206431096913',
@@ -1277,7 +1278,8 @@ const {
 
           // Disable research for voice person-memory/backread requests
           const isBackreadLike = isPersonMemoryRequest || isWhatWeTalkedAbout;
-          const researchMode = isBackreadLike ? false : shouldUseResearchMode(transcript);
+          const voiceResearchEnabled = guildId ? researchEnabledGuilds.has(guildId) : false;
+          const researchMode = (!isBackreadLike && voiceResearchEnabled) ? shouldUseResearchMode(transcript) : false;
           const tavilyResults = researchMode ? await searchWithTavily(transcript, 3) : [];
 
           let aiReply = 'Hindi ko nasagot, ghorl.';
@@ -2733,6 +2735,38 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!research on/off — Admin-only toggle for web research + Sources
+        if (command === 'research' || command === 'sources') {
+          if (!message.guild) {
+            await message.reply('Teh, pang-server lang to.');
+            return;
+          }
+          const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+          if (!isAdmin) {
+            await message.reply('Admins lang pwede mag toggle ng research, ghorl.');
+            return;
+          }
+
+          const action = (args[0] || '').toLowerCase();
+          if (action === 'on' || action === 'enable' || action === 'true' || action === '1') {
+            researchEnabledGuilds.add(message.guild.id);
+          } else if (action === 'off' || action === 'disable' || action === 'false' || action === '0') {
+            researchEnabledGuilds.delete(message.guild.id);
+          } else {
+            // toggle if no arg/unknown
+            if (researchEnabledGuilds.has(message.guild.id)) researchEnabledGuilds.delete(message.guild.id);
+            else researchEnabledGuilds.add(message.guild.id);
+          }
+
+          const enabled = researchEnabledGuilds.has(message.guild.id);
+          await message.reply(
+            enabled
+              ? 'Sige, research ON. Magso-sources lang ako pag minention/reply mo ko at research/latest yung tanong.'
+              : 'Research OFF. Wala munang sources kahit anong mangyari.'
+          );
+          return;
+        }
+
         // j!permcheck — Admin-only permission diagnostics for current channel
         if (command === 'permcheck') {
           if (!message.guild) {
@@ -2922,6 +2956,85 @@ if (authorId === '669047995009859604') {
           return;
         }
 
+        // j!portray / j!portrait — portray a Discord user as an image (Groq drafts prompt, Leonardo renders)
+        // Usage: j!portray @user <optional style notes>
+        if (command === 'portray' || command === 'portrait') {
+          if (!LEONARDO_API_KEY) {
+            await message.reply('Teh, wala pang `LEONARDO_API_KEY` sa .env. Lagay mo muna.');
+            return;
+          }
+          if (!message.guild) {
+            await message.reply('Teh, pang-server lang to. Mention mo yung tao.');
+            return;
+          }
+          const targetUser = message.mentions.users.first() || null;
+          const extra = args.filter((a) => !a.startsWith('<@')).join(' ').trim();
+          if (!targetUser) {
+            await message.reply('Format: `j!portray @user <style notes>`');
+            return;
+          }
+
+          const displayName =
+            message.guild.members.cache.get(targetUser.id)?.displayName ||
+            targetUser.globalName ||
+            targetUser.username ||
+            targetUser.tag;
+
+          let facts = '';
+          try {
+            const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [targetUser.id]);
+            facts = factsRes.rows?.[0]?.facts || '';
+          } catch { }
+
+          let recentMsgs = '';
+          try {
+            const msgRes = await pool.query(
+              'SELECT content FROM messages WHERE guild_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 12',
+              [message.guild.id, targetUser.id]
+            );
+            recentMsgs = (msgRes.rows || [])
+              .map((r) => String(r.content || '').replace(/\s+/g, ' ').trim())
+              .filter(Boolean)
+              .slice(0, 12)
+              .join(' | ');
+          } catch { }
+
+          await message.channel.sendTyping();
+          try {
+            const promptDraftRes = await performChatRequest({
+              model: 'llama-3.1-8b-instant',
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You are crafting an image prompt for Leonardo.ai. Output ONLY the prompt text, no labels. ' +
+                    'Make it vivid but safe. No raw Discord IDs. No sexual content. ' +
+                    'Prefer photoreal unless user asked otherwise. Keep under 280 chars.'
+                },
+                {
+                  role: 'user',
+                  content:
+                    `Portray this person as an image.\n` +
+                    `Name: ${displayName}\n` +
+                    `Known facts: ${facts || 'none'}\n` +
+                    `Recent chat vibe: ${recentMsgs || 'none'}\n` +
+                    `Extra style notes: ${extra || 'none'}`
+                }
+              ],
+              temperature: 0.6,
+              max_tokens: 120
+            });
+
+            const drafted = (promptDraftRes.data?.choices?.[0]?.message?.content || '').trim();
+            const finalPrompt = drafted.replace(/\s+/g, ' ').slice(0, 280) || `${displayName}, photoreal portrait in a gym, cinematic lighting`;
+
+            await leonardoGenerateAndSend({ channel: message.channel, replyToMessage: message, prompt: finalPrompt });
+          } catch (e) {
+            await message.reply(`Teh, di ko ma-portray ngayon. ${e.message}`);
+          }
+          return;
+        }
+
         // j!summarize / j!backread — Summarize chat (DB-grounded)
         // Usage:
         //   j!summarize              -> last 10 messages (quick)
@@ -3090,6 +3203,7 @@ if (authorId === '669047995009859604') {
                   'j!view @User        - chika profile\n' +
                   'j!usersummary @User - summary ng tao (DB)\n' +
                   'j!img <prompt>      - generate picture\n' +
+                  'j!portray @User     - portray a user as image\n' +
                   '```' +
                   '**No command needed:** “kilala mo ba ko?” / “kilala mo ba si @X?” (based sa naaalala ko)',
                 inline: false
@@ -3301,7 +3415,8 @@ if (authorId === '669047995009859604') {
 
       // Natural image request (mention/reply mode): "send ka picture ng ..."
       // Converts to Leonardo generation and replies with an attachment.
-      const imgMatch = content.match(/\b(send|gawa|generate|create)\b[\s\S]{0,20}\b(picture|pic|image|larawan)\b[\s\S]{0,10}\b(ng|of|na)\b[\s:,-]*(.+)$/i);
+      // Natural image requests (allow missing "picture" keyword, since users sometimes just say "gawa ka ng X")
+      const imgMatch = content.match(/\b(send|gawa|generate|create)\b[\s\S]{0,25}\b(picture|pic|image|larawan)?\b[\s\S]{0,12}\b(ng|of|na)\b[\s:,-]*(.+)$/i);
       if (imgMatch && (isMention || isReplyToBot) && LEONARDO_API_KEY) {
         const prompt = (imgMatch[4] || '').trim();
         if (prompt.length >= 3) {
@@ -3491,7 +3606,8 @@ if (authorId === '669047995009859604') {
 
       // Never use web research for backread/summarize or person-memory requests.
       // These must be grounded in channel history / stored memory only (no "Sources:" spam).
-      const allowResearchAndSources = (isMention || isReplyToBot) && !shouldAutoChat;
+      const researchEnabled = message.guild?.id ? researchEnabledGuilds.has(message.guild.id) : false;
+      const allowResearchAndSources = researchEnabled && (isMention || isReplyToBot) && !shouldAutoChat;
       const researchMode =
         allowResearchAndSources && !(isBackreadSummaryRequest || isPersonMemoryRequest)
           ? shouldUseResearchMode(content)
@@ -3567,7 +3683,11 @@ if (authorId === '669047995009859604') {
         const finalReply = (allowResearchAndSources && sourceLines.length > 0)
           ? `${reply}\n\nSources:\n${sourceLines.join('\n')}`
           : reply;
-        const safeReplyRaw = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
+        let safeReplyRaw = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
+        // Strip any hallucinated Sources block unless research is explicitly enabled/allowed.
+        if (!allowResearchAndSources) {
+          safeReplyRaw = safeReplyRaw.replace(/\n\nSources:\s*[\s\S]*$/i, '').trim();
+        }
         const safeReply = keepChikaEmojisLight(safeReplyRaw);
 
         await message.reply(safeReply);
