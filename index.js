@@ -715,7 +715,7 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     if (!lower) return false;
     const hasProfanity = /(putang|tangina|gago|tanga|bobo|ulol|tarantado|inutil|pakyu|fuck you|bwisit)/i.test(lower);
     if (!hasProfanity) return false;
-    const targetCue = /(ikaw|ka|mo|janjan|bot|ai|bitch|gaga|gago ka|bobo ka|tangina mo)/i.test(lower);
+    const targetCue = /(ikaw|ka|mo|janjan|bot|ai|bitch|gaga|gago ka|bobo ka|tangina mo|fuck you|f\*ck you|king ina|puta ka)/i.test(lower);
     return Boolean(targetCue && (isMention || isReplyToBot || shouldAutoChat || botThreadActive));
   }
 
@@ -752,20 +752,20 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
   function buildPikonRageReply(scopeKey = 'global') {
     const lines = [
       'KUHANG KUHA MO NA PIKA KO, TEH! JUSQ KA!',
-      'PIKON NA KO SAYO, TEH! ISA PA, BABARDAGULIN KITA SA SALITA.',
-      'JUSQ TEH, UBOS PASENSYA KO! AYUSIN MO BIBIG MO BAGO AKO LALO UMINIT.',
+      'PIKON NA KO SAYO, TEH! ISA PA, BABARDAGULAN TAYIZ DITO MALALA!.',
+      'JUSQ TEH, UBOS PASENSYA KO! AYUSIN MO BIBIG MO BAGO AKO LALO UMINIT SAYIZ!.',
       'TIGILAN MO KO, TEH! G NA G KA, AKO MAS G NA G SAYO.',
-      'PIKA LEVEL MAX NA KO, TEH! WAG MO KO SUBUKAN NGAYON.',
-      'PUTANGINA TEH, SOBRA KA NA. LAST WARNING KO NA TO.',
-      'GAGO KA BA? KUNG AKALA MO URONG AKO, NAGKAKAMALI KA.',
+      'PIKA LEVEL MAX NA KO TEH! WAG MO KO SUBUKAN NGAYON.',
+      'PUTANGINA TEH, SOBRA KA NA!!',
+      'GAGO KA BA? KUNG AKALA MO UURONG AKO, NAGKAKAMALI KA MAG-FIFIGHT AKIZ!',
       'PUTANGINA MO TEH! TARANTADO KA BA? GAGO ULO MO TODAY.',
-      'HOY GAGO, WAG MO KO PINAPAIKOT. AKO TO, MAS MATARAY AKO SAYO.',
+      'HOY GAGO, WAG MO KO PINAPAIKOT.',
       'ULOL KA BA TEH? KUNG MURAHAN GUSTO MO, KAYA KITANG TAPATAN.',
-      'PUTANGINA MO, TEH! WAG MONG SUBUKAN PASENSYA KO KUNG AYAW MO NG GULO.',
+      'PUTANGINA MO, TEH! GAGO TARANTADO! MANGMANG ULOL! TANGINA KA!.',
       'TARANTADO KA BA, GAGO? AKALA MO IKAW LANG MAANGAS DITO?',
       'GAGO KA TALAGA TODAY, TEH. AKO NA NGA MAHABA PASENSYA, INUBOS MO PA.',
-      'PUTA KA, TEH! MAG-AYOS KA NG BIBIG KUNG AYAW MO MASAKTAN EGO MO.',
-      'HINDI AKO URONG, GAGO. SUMUBOK KA PA, LALO KITA IBABAON SA BARDAGULAN.'
+      'PUTA KA, TEH! MAGAYOS KA NG MATABIL MONG BIBIG KUNG AYAW MO MASAKTAN EGO MO.',
+
     ];
     const picked = pickNonRepeatingLine(scopeKey, lines);
     return picked || lines[Math.floor(Math.random() * lines.length)];
@@ -1190,6 +1190,16 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
       'alin ba talaga, accla? one keyword lang para exact at walang sabog.'
     ];
     return pickNonRepeatingLine(`vague-recall:${scopeKey}`, lines) || lines[0];
+  }
+
+  function buildDeterministicTermReply(content = '') {
+    const lower = String(content || '').toLowerCase().trim();
+    if (!lower) return '';
+    const asksPika =
+      /\b(what\s+is\s+pika|ano\s+ang\s+pika|ano\s+yung\s+pika|anong\s+pika|pika\s+meaning|meaning\s+ng\s+pika)\b/i
+        .test(lower);
+    if (!asksPika) return '';
+    return 'pika = pikon, teh. ibig sabihin badtrip na ko at ubos na pasensya ko.';
   }
 
   function enqueueChannelAI(channelId, task) {
@@ -1994,13 +2004,54 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     night: ''
   };
 
-  function getNowInPhilippines() {
+  const PH_TIME_ZONE = 'Asia/Manila';
+
+  function getNowInPhilippinesParts() {
     const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: PH_TIME_ZONE,
+      weekday: 'long',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).formatToParts(now);
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+    const year = Number(map.year);
+    const month = Number(map.month);
+    const day = Number(map.day);
+    const hour = Number(map.hour);
+    const minute = Number(map.minute);
+    const second = Number(map.second);
+    const weekday = map.weekday || '';
+    const mm = String(month).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    const HH = String(hour).padStart(2, '0');
+    const MM = String(minute).padStart(2, '0');
+    const SS = String(second).padStart(2, '0');
+    return {
+      year,
+      month,
+      day,
+      hour,
+      minute,
+      second,
+      weekday,
+      dateKey: `${year}-${mm}-${dd}`,
+      timeKey: `${HH}:${MM}:${SS}`
+    };
+  }
+
+  function getNowInPhilippines() {
+    const now = getNowInPhilippinesParts();
     try {
-      const phString = now.toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+      const phString = `${now.year}-${String(now.month).padStart(2, '0')}-${String(now.day).padStart(2, '0')}T${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}:${String(now.second).padStart(2, '0')}`;
       return new Date(phString);
     } catch {
-      return now;
+      return new Date();
     }
   }
 
@@ -2221,10 +2272,10 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     return Array.from(active.values());
   }
 
-  async function generateScheduledGreetingText({ type, channel, members, now }) {
+  async function generateScheduledGreetingText({ type, channel, members, nowParts }) {
     const isMorning = type === 'morning';
     const modeLabel = isMorning ? '08:00 AM' : '10:00 PM';
-    const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const dayName = nowParts?.weekday || 'Unknown day';
     const memberNames = members
       .map((m) => m.displayName || m.user?.globalName || m.user?.username || m.user?.tag)
       .filter(Boolean)
@@ -2292,19 +2343,39 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     return '';
   }
 
-  async function sendScheduledGreeting(type) {
+  async function sendScheduledGreeting(type, options = {}) {
+    const forcedChannelId = typeof options.forcedChannelId === 'string' && options.forcedChannelId.trim()
+      ? options.forcedChannelId.trim()
+      : null;
     try {
-      const channel = await client.channels.fetch(GREET_CHANNEL_ID).catch(() => null);
-      if (!channel || !channel.isTextBased()) return;
+      const targetChannelId = forcedChannelId || GREET_CHANNEL_ID;
+      const channel = await client.channels.fetch(targetChannelId).catch(() => null);
+      if (!channel) {
+        console.warn(`[GREET] Channel not found: ${targetChannelId}`);
+        return false;
+      }
+      if (!channel.isTextBased()) {
+        console.warn(`[GREET] Channel is not text-based: ${targetChannelId}`);
+        return false;
+      }
 
-      const now = getNowInPhilippines();
+      const missingPerms = getMissingTextPermsForChannel(channel);
+      if (missingPerms.length > 0 && missingPerms[0] !== 'unknown-channel') {
+        console.warn(`[GREET] Missing channel perms in #${channel.name} (${targetChannelId}): ${missingPerms.join(', ')}`);
+        return false;
+      }
+
+      const nowParts = getNowInPhilippinesParts();
       const members = await collectActiveMembersForChannel(channel);
       const mentions =
         members.length > 0
           ? members.map((m) => `<@${m.id}>`).join(' ')
           : 'Walang naka-online na ghorl ngayon.';
-      const text = await generateScheduledGreetingText({ type, channel, members, now });
-      if (!text) return;
+      const text = await generateScheduledGreetingText({ type, channel, members, nowParts });
+      if (!text) {
+        console.warn(`[GREET] Empty AI greeting text for type=${type} in channel=${targetChannelId}`);
+        return false;
+      }
       lastGreetingTexts[type] = text;
 
       const header =
@@ -2331,6 +2402,7 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
       ]);
 
       const sent = await channel.send({ content: `${header}\n${mentions}\n\n${text}` });
+      console.log(`[GREET] Sent ${type} greeting to #${channel.name} (${channel.id}) at PH ${nowParts.timeKey}`);
 
       try {
         await pool.query(
@@ -2346,29 +2418,31 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
       } catch (dbErr) {
         console.error('[DB] Scheduled greeting save error:', dbErr.message);
       }
+      return true;
     } catch (e) {
       console.error('Failed to send scheduled greeting:', e);
+      return false;
     }
   }
 
   function startScheduledGreetings() {
     const tick = async () => {
-      const now = getNowInPhilippines();
-      const hour = now.getHours();
-      const minute = now.getMinutes();
-      const todayKey = now.toISOString().slice(0, 10);
+      const nowParts = getNowInPhilippinesParts();
+      const hour = nowParts.hour;
+      const minute = nowParts.minute;
+      const todayKey = nowParts.dateKey;
 
       const inMorningWindow = (hour === 8 && minute <= 5) || (hour === 8 && lastGreetings.morning !== todayKey);
       const inNightWindow = (hour === 22 && minute <= 5) || (hour === 22 && lastGreetings.night !== todayKey);
 
       if (inMorningWindow && lastGreetings.morning !== todayKey) {
-        await sendScheduledGreeting('morning');
-        lastGreetings.morning = todayKey;
+        const sent = await sendScheduledGreeting('morning');
+        if (sent) lastGreetings.morning = todayKey;
       }
 
       if (inNightWindow && lastGreetings.night !== todayKey) {
-        await sendScheduledGreeting('night');
-        lastGreetings.night = todayKey;
+        const sent = await sendScheduledGreeting('night');
+        if (sent) lastGreetings.night = todayKey;
       }
     };
 
@@ -3742,6 +3816,7 @@ if (authorId === '669047995009859604') {
             .setDescription('**Exclusive commands para sa mga diyosa ng server:**\n\n' +
               '- `j!status <note>` - Set bot bubble status (Admin only)\n' +
               '- `j!chat <id> <msg>` - Ghost message/reply (Owner only)\n' +
+              '- `j!greetnow [morning|night|auto] [here]` - Force scheduled greeting test\n' +
               '- `j!test` - Trigger mapang-lait greeting/roast\n' +
               '- `j!vc <text>` - Male TTS in voice channel\n' +
               '- `j!ask <question>` - Voice-only AI response\n' +
@@ -3753,11 +3828,52 @@ if (authorId === '669047995009859604') {
           await message.reply({ embeds: [adminEmbed] });
           return;
         }
+
+        // j!greetnow [morning|night|auto] [here]
+        // Manual trigger for scheduled greetings for quick diagnostics.
+        if (command === 'greetnow') {
+          if (!message.guild) {
+            await message.reply('Pang-server lang to, ghorl.');
+            return;
+          }
+          const isAdmin = message.member && message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+          if (!isAdmin) {
+            await message.reply('Admins lang puwedeng mag-force greet, mhie.');
+            return;
+          }
+
+          const modeArg = (args[0] || 'auto').toLowerCase();
+          const whereArg = (args[1] || '').toLowerCase();
+          if (!['auto', 'morning', 'night'].includes(modeArg)) {
+            await message.reply('Format: `j!greetnow [morning|night|auto] [here]`');
+            return;
+          }
+
+          const nowParts = getNowInPhilippinesParts();
+          const type = modeArg === 'auto'
+            ? ((nowParts.hour >= 15) ? 'night' : 'morning')
+            : modeArg;
+          const forcedChannelId = whereArg === 'here' ? message.channel.id : null;
+          const sent = await sendScheduledGreeting(type, { forcedChannelId });
+
+          if (sent) {
+            lastGreetings[type] = nowParts.dateKey;
+            const scopeLabel = forcedChannelId ? `this channel (<#${forcedChannelId}>)` : `configured channel (<#${GREET_CHANNEL_ID}>)`;
+            await message.reply(`Ayan na. Nag-force send ako ng **${type}** greeting sa ${scopeLabel}.`);
+          } else {
+            await message.reply(
+              `Hindi nasend yung forced ${type} greeting. ` +
+              'Check logs for `[GREET]` details (`channel fetch`, `permissions`, o `AI generation` issue).'
+            );
+          }
+          return;
+        }
+
         // j!test
         if (command === 'test') {
-          const now = getNowInPhilippines();
-          const hour = now.getHours();
-          const minute = now.getMinutes();
+          const now = getNowInPhilippinesParts();
+          const hour = now.hour;
+          const minute = now.minute;
           const channel = message.channel;
           const members = message.guild ? await collectActiveMembersForChannel(channel) : [];
           const mentions =
@@ -3864,6 +3980,7 @@ if (authorId === '669047995009859604') {
                 value:
                   '```' +
                   'j!admin             - admin panel\n' +
+                  'j!greetnow [mode] [here] - force scheduled greeting\n' +
                   'j!permcheck         - check channel perms\n' +
                   'j!checkdb           - DB size/storage (GB)\n' +
                   'j!status <note>     - set bot status\n' +
@@ -4115,6 +4232,25 @@ if (authorId === '669047995009859604') {
         message.author.username ||
         'teh';
       const memoryScopeKey = `${message.channel.id}:${message.author.id}`;
+      const deterministicTermReply = buildDeterministicTermReply(content);
+      if (deterministicTermReply) {
+        await message.reply(deterministicTermReply);
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              deterministicTermReply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Term reply save error:', dbErr.message);
+        }
+        return;
+      }
       const deterministicMemoryReply = buildDeterministicMemoryRecallReply({
         content,
         scopeKey: memoryScopeKey
@@ -4846,5 +4982,3 @@ if (authorId === '669047995009859604') {
   });
 
 })(); // End of async IIFE
-
-
