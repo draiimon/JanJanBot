@@ -68,6 +68,8 @@ const {
   const lastPortrayByChannel = new Map(); // channelId -> { userId, displayName }
   const topicResetByChannel = new Map(); // channelId -> untilMs
   const vagueRecallByScope = new Map(); // scopeKey -> { count, ts }
+  const pikonStateByScope = new Map(); // scopeKey -> { strikes, lastAt, rageUntil }
+  const profanityBudgetByScope = new Map(); // scopeKey -> { count, windowStart }
   const userStyleCache = new Map(); // userId -> { language, tone, slangAvg, samples }
   const recentBotPhraseCache = new Map(); // scopeKey -> string[]
   const priorityAutoChatChannels = new Set([
@@ -734,6 +736,137 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     ];
     const picked = pickNonRepeatingLine(scopeKey, lines);
     return picked || lines[Math.floor(Math.random() * lines.length)];
+  }
+
+  function normalizePikonState(scopeKey) {
+    const now = Date.now();
+    const state = pikonStateByScope.get(scopeKey) || { strikes: 0, lastAt: 0, rageUntil: 0 };
+    const idleTooLong = now - (state.lastAt || 0) > (12 * 60 * 1000);
+    const normalized = idleTooLong
+      ? { strikes: 0, lastAt: now, rageUntil: state.rageUntil || 0 }
+      : { strikes: state.strikes || 0, lastAt: now, rageUntil: state.rageUntil || 0 };
+    pikonStateByScope.set(scopeKey, normalized);
+    return normalized;
+  }
+
+  function buildPikonRageReply(scopeKey = 'global') {
+    const lines = [
+      'KUHANG KUHA MO NA PIKA KO, TEH! JUSQ KA!',
+      'PIKON NA KO SAYO, TEH! ISA PA, BABARDAGULIN KITA SA SALITA.',
+      'JUSQ TEH, UBOS PASENSYA KO! AYUSIN MO BIBIG MO BAGO AKO LALO UMINIT.',
+      'TIGILAN MO KO, TEH! G NA G KA, AKO MAS G NA G SAYO.',
+      'PIKA LEVEL MAX NA KO, TEH! WAG MO KO SUBUKAN NGAYON.',
+      'PUTANGINA TEH, SOBRA KA NA. LAST WARNING KO NA TO.',
+      'GAGO KA BA? KUNG AKALA MO URONG AKO, NAGKAKAMALI KA.',
+      'PUTANGINA MO TEH! TARANTADO KA BA? GAGO ULO MO TODAY.',
+      'HOY GAGO, WAG MO KO PINAPAIKOT. AKO TO, MAS MATARAY AKO SAYO.',
+      'ULOL KA BA TEH? KUNG MURAHAN GUSTO MO, KAYA KITANG TAPATAN.',
+      'PUTANGINA MO, TEH! WAG MONG SUBUKAN PASENSYA KO KUNG AYAW MO NG GULO.',
+      'TARANTADO KA BA, GAGO? AKALA MO IKAW LANG MAANGAS DITO?',
+      'GAGO KA TALAGA TODAY, TEH. AKO NA NGA MAHABA PASENSYA, INUBOS MO PA.',
+      'PUTA KA, TEH! MAG-AYOS KA NG BIBIG KUNG AYAW MO MASAKTAN EGO MO.',
+      'HINDI AKO URONG, GAGO. SUMUBOK KA PA, LALO KITA IBABAON SA BARDAGULAN.'
+    ];
+    const picked = pickNonRepeatingLine(scopeKey, lines);
+    return picked || lines[Math.floor(Math.random() * lines.length)];
+  }
+
+  function buildDefaultMatarayReply(scopeKey = 'global') {
+    const lines = [
+      'teh, wag kang maangas kung sabog ka naman. ayusin mo punto mo.',
+      'luh, dami mong satsat pero ligwak logic mo. linaw, dali.',
+      'jusq ka, wag mo kong ginagawang tanga. diretsuhin mo sinasabi mo.',
+      'accla, kung bastos ka sakin, mas bastos balik ko sayo.',
+      'beh, mag-context ka muna bago ka kumuda nang kumuda.',
+      'teh, wag kang pasabog kung wala ka namang laman.',
+      'mataray ako, oo. at hindi ako takot sumupalpal pag mema ka.',
+      'huy, ayusin mo bibig mo. di ako laruan mo dito.',
+      'gago ka ba, teh? kung ganyan ka magsalita, mas lulupitan kita.',
+      'putangina mo teh, linawin mo point mo bago ka magwala.',
+      'tarantado ka ba? ayusin mo context mo, hindi yung puro yabang.',
+      'gago ka ba today? puro angas ka pero sablay naman sinasabi mo.',
+      'putangina, teh. hindi ka kawalan kung puro kalat lang dala mo.',
+      'ulol ka ba? kaunting utak gamitin mo bago ka pumutak.',
+      'gaga ka beh, wag mo kong ina-underestimate, mas maasim bunganga ko.',
+      'tanga ka ba? diretsuhin mo para di tayo parehong bwisit.'
+    ];
+    const picked = pickNonRepeatingLine(scopeKey, lines);
+    return picked || lines[Math.floor(Math.random() * lines.length)];
+  }
+
+  function getProfanityBudgetState(scopeKey) {
+    const now = Date.now();
+    const row = profanityBudgetByScope.get(scopeKey) || { count: 0, windowStart: now };
+    const windowMs = 5 * 60 * 1000;
+    if (now - row.windowStart > windowMs) {
+      const reset = { count: 0, windowStart: now };
+      profanityBudgetByScope.set(scopeKey, reset);
+      return reset;
+    }
+    return row;
+  }
+
+  function canUseProfanity(scopeKey) {
+    const row = getProfanityBudgetState(scopeKey);
+    return row.count < 20; // max 20 profane replies per 5 mins per scope
+  }
+
+  function consumeProfanity(scopeKey) {
+    const row = getProfanityBudgetState(scopeKey);
+    row.count += 1;
+    profanityBudgetByScope.set(scopeKey, row);
+  }
+
+  function sanitizeToLessProfanity(text = '') {
+    return String(text || '')
+      .replace(/\bputangina\b/gi, 'grabe')
+      .replace(/\btangina\b/gi, 'jusq')
+      .replace(/\bgago\b/gi, 'teh')
+      .replace(/\bbobo\b/gi, 'lutang')
+      .replace(/\btanga\b/gi, 'sabog')
+      .replace(/\bulol\b/gi, 'kalma')
+      .replace(/\btarantado\b/gi, 'pasaway')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  function buildPikonManagedReply(scopeKey = 'global', text = '') {
+    const now = Date.now();
+    const state = normalizePikonState(scopeKey);
+    const inRageCooldown = (state.rageUntil || 0) > now;
+
+    if (inRageCooldown) {
+      let rageReply = buildPikonRageReply(scopeKey);
+      if (canUseProfanity(scopeKey)) consumeProfanity(scopeKey);
+      else rageReply = sanitizeToLessProfanity(rageReply);
+      registerRecentPhrases(scopeKey, rageReply);
+      return rageReply;
+    }
+
+    const hasHeavyProfanity = /(putang|tangina|gago|tanga|bobo|ulol|tarantado|inutil|pakyu|fuck you)/i.test(text || '');
+    state.strikes = Math.min(8, (state.strikes || 0) + (hasHeavyProfanity ? 2 : 1));
+    state.lastAt = now;
+
+    if (state.strikes >= 2) {
+      state.rageUntil = now + (5 * 60 * 1000); // pikon cooldown: 5 minutes
+      pikonStateByScope.set(scopeKey, state);
+      let rageReply = buildPikonRageReply(scopeKey);
+      if (canUseProfanity(scopeKey)) consumeProfanity(scopeKey);
+      else rageReply = sanitizeToLessProfanity(rageReply);
+      registerRecentPhrases(scopeKey, rageReply);
+      return rageReply;
+    }
+
+    pikonStateByScope.set(scopeKey, state);
+    let matarayReply = buildDefaultMatarayReply(scopeKey);
+    if (!canUseProfanity(scopeKey)) {
+      matarayReply = sanitizeToLessProfanity(matarayReply);
+    } else if (/(jusq ka|mema|sabog|ligwak)/i.test(matarayReply)) {
+      // count only if line includes sharp slang/profane-adjacent wording
+      consumeProfanity(scopeKey);
+    }
+    registerRecentPhrases(scopeKey, matarayReply);
+    return matarayReply;
   }
 
   function isTopicResetIntent(text = '') {
@@ -4022,8 +4155,7 @@ if (authorId === '669047995009859604') {
       const rageScopeKey = `rage:${message.channel.id}:${message.author.id}`;
       const rudeToBot = isRudeTowardBot(content, { isMention, isReplyToBot, shouldAutoChat, botThreadActive });
       if (rudeToBot) {
-        const rageReply = buildRageClapback(rageScopeKey);
-        registerRecentPhrases(rageScopeKey, rageReply);
+        const rageReply = buildPikonManagedReply(rageScopeKey, content);
         await message.reply(rageReply);
         try {
           await pool.query(
