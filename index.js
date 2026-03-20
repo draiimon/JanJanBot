@@ -3631,14 +3631,12 @@ if (authorId === '669047995009859604') {
           }
           return;
         }
-
-
         // j!help / j!tulong
         if (command === 'help' || command === 'tulong') {
           const menuEmbed = new EmbedBuilder()
             .setColor(0xFF4D8D)
             .setAuthor({
-              name: 'JANJAN • COMMAND MENU',
+              name: 'JANJAN - COMMAND MENU',
               iconURL: client.user.displayAvatarURL({ dynamic: true })
             })
             .setThumbnail(client.user.displayAvatarURL({ dynamic: true }))
@@ -3646,11 +3644,21 @@ if (authorId === '669047995009859604') {
               '**about me**\n' +
               '- mention/reply ka teh replyan kita\n' +
               '- minsan sasabat ako kahit di ako tinatanong, pake mo ba\n' +
+              '- default ko latest-chat focus (hindi ako hukay ng old issue)\n' +
+              '- memory recall ko on-demand: `naalala mo ba...`, `kanina...`, `balikan natin...`\n' +
               '- pag gusto mo tumigil ako: `j!tulog on`'
             )
             .addFields(
               {
-                name: '💬 CHIKA / PROFILE',
+                name: 'CONVO FLOW (LATEST)',
+                value:
+                  '- natural and human-like\n' +
+                  '- less oversharing, less redundancy\n' +
+                  '- no past callback unless needed or explicitly requested',
+                inline: false
+              },
+              {
+                name: 'CHIKA / PROFILE',
                 value:
                   '```' +
                   'j!view @User        - chika profile\n' +
@@ -3658,11 +3666,11 @@ if (authorId === '669047995009859604') {
                   'j!img <prompt>      - generate picture\n' +
                   'j!portray @User     - portray a user as image\n' +
                   '```' +
-                  '**No command needed:** “kilala mo ba ko?” / “kilala mo ba si @X?” (based sa naaalala ko)',
+                  '**No command needed:** "kilala mo ba ko?" / "kilala mo ba si @X?" / "naalala mo ba sinabi ko kanina?"',
                 inline: false
               },
               {
-                name: '🧠 SUMMARIZE / BACKREAD',
+                name: 'SUMMARIZE / BACKREAD',
                 value:
                   '```' +
                   'j!summarize or j!backread\n' +
@@ -3671,7 +3679,7 @@ if (authorId === '669047995009859604') {
                 inline: false
               },
               {
-                name: '🔊 VOICE / TTS',
+                name: 'VOICE / TTS',
                 value:
                   '```' +
                   'j!join              - pasok ako sa VC mo\n' +
@@ -3686,7 +3694,7 @@ if (authorId === '669047995009859604') {
                 inline: false
               },
               {
-                name: '🛠️ ADMIN / DIAGNOSTICS',
+                name: 'ADMIN / DIAGNOSTICS',
                 value:
                   '```' +
                   'j!admin             - admin panel\n' +
@@ -3698,7 +3706,7 @@ if (authorId === '669047995009859604') {
                 inline: false
               },
               {
-                name: '⚡ QUICK',
+                name: 'QUICK',
                 value:
                   '```' +
                   'j!ping              - latency\n' +
@@ -3707,15 +3715,17 @@ if (authorId === '669047995009859604') {
                 inline: false
               }
             )
-            .setFooter({ text: 'JanJan Bot • created by Drei • tip: j!admin (admins)' })
+            .setFooter({ text: 'JanJan Bot - created by Drei - tip: j!admin (admins)' })
             .setTimestamp();
 
           const examplesEmbed = new EmbedBuilder()
             .setColor(0x7B61FF)
-            .setTitle('📋 EXAMPLES (copy-paste)')
+            .setTitle('EXAMPLES (copy-paste)')
             .setDescription(
               '```' +
               '@JanJan Versa hi\n' +
+              'iba na topic\n' +
+              'naalala mo ba sinabi ko kanina?\n' +
               'j!summarize\n' +
               'kilala mo ba ko?\n' +
               'kilala mo ba si @Name?\n' +
@@ -3727,8 +3737,7 @@ if (authorId === '669047995009859604') {
           await message.reply({ embeds: [menuEmbed, examplesEmbed] });
           return;
         }
-
-      }
+}
 
       if (!rawContent.startsWith(prefix)) {
         const movedByNaturalChat = await tryNaturalVoiceMoveFromChat(message, rawContent);
@@ -4648,4 +4657,5 @@ if (authorId === '669047995009859604') {
   });
 
 })(); // End of async IIFE
+
 
