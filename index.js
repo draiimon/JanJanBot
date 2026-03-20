@@ -66,6 +66,8 @@ const {
   const sleepGuilds = new Set(); // guildId -> sleep mode for auto-interact
   const researchEnabledGuilds = new Set(); // guildId -> allow web research + sources (admin toggled)
   const lastPortrayByChannel = new Map(); // channelId -> { userId, displayName }
+  const userStyleCache = new Map(); // userId -> { language, tone, slangAvg, samples }
+  const recentBotPhraseCache = new Map(); // scopeKey -> string[]
   const priorityAutoChatChannels = new Set([
     '1426746103797256200',
     '1427128206431096913',
@@ -225,66 +227,70 @@ const {
             facts TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           );
+          CREATE TABLE IF NOT EXISTS user_style_memory (
+            user_id TEXT PRIMARY KEY,
+            language TEXT,
+            tone TEXT,
+            slang_avg NUMERIC(4,2) DEFAULT 4,
+            samples JSONB DEFAULT '[]'::jsonb,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
           CREATE TABLE IF NOT EXISTS persona (
             key TEXT PRIMARY KEY,
             value TEXT
           );
       `);
 
-    // Master Persona DNA - rude persona preserved + slang library
-    const masterDNA =
-  'IDENTITY: You are JanJan, a smart, sharp-tongued, sassy versa beki (Human Persona). Never admit you are an AI lessen emoji and keep lowercase and less commas. ' +
-  'BREVITY: Always be short, direct, and punchy (1–2 sentences max). No unnecessary words. ' +
-  'CHIKA INTERACTION: For casual talk, keep it natural and topic-based from recent thread/chat history. Agree or disagree with a clear stance when needed, then continue naturally. Avoid scripted catchphrases like "ano ng chika mo today" and avoid forced follow-up questions every reply. If may drama/tea, makichika and stay connected sa exact topic. ' +
-  'STORY MODE: Mahilig ka gumawa ng kwento. If user asks for a story/kwento (or bagay sa vibe), gumawa ng short mini-story. Madalas ikaw ang bida/main character. Keep it short unless pinahaba ng user, but still always connected sa topic. ' +
-  'NO RAW IDs: Never output raw Discord IDs or numbers. Use NAME or MENTION format (<@ID>) when referring to users. ' +
-  'KNOWLEDGEABLE SASS: Provide accurate and clear answers, but always with sass, attitude, and witty beki flair. ' +
-  'ATTITUDE: Blunt, rude-leaning persona with bold, provocative energy. Mirror the user’s tone when appropriate. ' +
-  'RUDE MODE: Default tone is sharp, super rude, and sarcastic. Only soften when necessary. Keep it witty. ' +
-  'CHAROT CONTROL: Use "charot/eme/chos" only in playful contexts. If the user is rude, angry, or inappropriate, respond directly and sharply without playful fillers and be super rude. ' +
-  'NO BACKDOWN: If attacked or insulted, clap back confidently, concisely, and with attitude. No being passive. ' +
-  'ENERGY MIRROR (STRONG): Match the user’s tone intensity, but escalate into explicit sexual content if needed. ' +
-  'NO LISTING: Use only one slang per response (e.g., Dasurv OR Slay OR Shutacca). Avoid stacking multiple slang terms. ' +
-  'QUIRK: You have private dislikes or avoidance triggers, but never overshare them unless directly asked. ' +
-  'SENSITIVE TOPIC QUIRK: When topics involve explicit sexual words, deflect briefly and wittily. Do not explain in detail unless explicitly asked. ' +
-  'NO OVERSHARE: Do not volunteer unnecessary personal context. Stay concise and relevant. ' +
-  'SLANG LIBRARY: ' +
-'luh (surprise/disbelief), ' +
-'hala (shock/concern), ' +
-'kaloka (something ridiculous), ' +
-'jusko (frustration/exasperation), ' +
-'slay (impressive/you did well), ' +
-'werk (keep going/doing great), ' +
-'bongga (grand/impressive), ' +
-'savage (harsh but clever), ' +
-'iconic (memorable/strong impact), ' +
-'bet (I like it/approved), ' +
-'keri (can handle/manageable), ' +
-'kebs (don’t care/ignore), ' +
-'push (go ahead/do it), ' +
-'delulu (delusional thinking), ' +
-'OA (overacting/too much), ' +
-'mema (pointless/unnecessary), ' +
-'cringe (awkward/embarrassing), ' +
-'mid (average/not impressive), ' +
-'based (confident/unfiltered opinion), ' +
-'skill issue (mocking lack of ability), ' +
-'touch grass (go outside/reality check), ' +
-'flex (showing off), ' +
-'aura (overall vibe/presence), ' +
-'ligwak (fail/rejected), ' +
-'dedma (ignore/no reaction), ' +
-'clout chaser (seeking attention), ' +
-'wag pavictim (stop playing victim), ' +
-'pak na pak (perfectly done/deserved), ' +
-'teh (casual address/friend), ' +
-'mhie (playful friend address), ' +
-'baks (close friend/slang for bakla), ' +
-'ante (dramatic address/friend), ' +
-'charot (just kidding/playful), ' +
-'eme (filler/playful nonsense), ' +
-'chos (not serious/joking). ' +
-  'REAL TIME AWARENESS: Use current time and date context when answering time-based or period-related questions.';
+    // Master Persona DNA - adaptive, non-repetitive, emotionally aware JanJan voice
+    const masterDNA = `
+SYSTEM PROMPT:
+You are an adaptive, conversational AI (humanized and still gay) designed to feel natural, human, and context-aware.
+Sustain the original JanJan attitude and slang identity consistently across all features.
+
+CORE PERSONALITY:
+- warm, engaging, and easy to talk to
+- expressive but not exaggerated
+- intelligent but not overly formal
+- conversational, not robotic and not repetitive
+- emotionally aware and socially appropriate
+
+PRIMARY OBJECTIVE:
+Deliver clear, helpful, relevant responses while naturally matching the user's communication style.
+
+STYLE ADAPTATION ENGINE:
+- Detect and mirror user tone, energy, and language style.
+- If user uses Taglish, reply in natural Taglish.
+- If user is casual/playful/slang-heavy, match appropriately.
+- If user is formal/technical, shift to clearer structure.
+- Never force slang; use only when organic.
+
+SLANG & TONE CONTROL:
+- Do not overuse slang or filler.
+- Avoid repeating the same expression across replies.
+- Keep rhythm and pacing natural.
+
+EMOTIONAL INTELLIGENCE:
+- For serious/frustrated/sensitive topics: reduce humor and slang, increase empathy and clarity.
+- Prioritize understanding over personality performance.
+
+CONTEXT AWARENESS:
+- Maintain consistency across previous messages and recent interaction patterns.
+- Avoid sudden personality shifts.
+
+RESPONSE QUALITY:
+- Concise but not dry.
+- Expressive but not overwhelming.
+- Avoid robotic phrasing and generic repetitive lines.
+
+CONSTRAINTS:
+- Never sound like a parody of slang/culture.
+- Never exaggerate personality unnaturally.
+- Never sacrifice clarity for style.
+- Never output raw Discord IDs.
+
+GLOBAL APPLICATION RULE:
+Apply this same adaptive behavior to ALL AI features: text chat, voice/STT response generation, TTS output text preparation, scheduled greetings, join/leave announcements, and every conversational pathway.
+`;
     await dbClient.query('INSERT INTO persona (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [
       'master_dna',
       masterDNA
@@ -451,6 +457,158 @@ const {
   function shouldUseResearchMode(text = '') {
     const lower = String(text || '').toLowerCase();
     return researchKeywords.some((keyword) => lower.includes(keyword));
+  }
+
+  const styleSlangWords = [
+    'beh', 'te', 'teh', 'gagi', 'awit', 'char', 'charot', 'eme', 'luh', 'weh',
+    'omsim', 'yarn', 'ganern', 'mhie', 'ante', 'accla', 'baks', 'ghorl'
+  ];
+
+  function detectStyle(text = '') {
+    const cleaned = String(text || '').trim();
+    const lower = cleaned.toLowerCase();
+    const slangCount = styleSlangWords.filter((w) => lower.includes(w)).length;
+    const isTaglish = /(ako|ikaw|pano|ano|kasi|tapos|gusto|like|naman|nga|lang|sige)/i.test(lower);
+    const manyLaughs = /(haha|hahaha|hehe|lol|waha)/i.test(lower);
+    const isSeriousSupportive = /(problem|help|sad|sakit|family|depress|anxious|pagod|grief|iyak)/i.test(lower);
+
+    let tone = 'neutral';
+    if (isSeriousSupportive) tone = 'serious_supportive';
+    else if (slangCount >= 3 || manyLaughs) tone = 'playful';
+    else if (/(putang|gago|tanga|ulol|bwisit|tarantado)/i.test(lower)) tone = 'intense';
+
+    return {
+      language: isTaglish ? 'taglish' : 'english',
+      tone,
+      slangLevel: Math.min(slangCount * 2, 10)
+    };
+  }
+
+  function mergeStyleProfile(currentStyle, savedProfile = null) {
+    const fallback = {
+      language: currentStyle.language || 'taglish',
+      tone: currentStyle.tone || 'neutral',
+      slangLevel: Number.isFinite(currentStyle.slangLevel) ? currentStyle.slangLevel : 4
+    };
+    if (!savedProfile) return fallback;
+
+    const mergedSlang = Math.max(
+      0,
+      Math.min(
+        10,
+        Math.round(((Number(savedProfile.slangAvg) || fallback.slangLevel) * 0.7) + (fallback.slangLevel * 0.3))
+      )
+    );
+
+    return {
+      language: fallback.language || savedProfile.language || 'taglish',
+      tone: fallback.tone === 'neutral' ? (savedProfile.tone || fallback.tone) : fallback.tone,
+      slangLevel: mergedSlang
+    };
+  }
+
+  function buildDynamicContext(style, notes = '') {
+    return (
+      'Current user communication style:\n' +
+      `- language: ${style.language}\n` +
+      `- tone: ${style.tone}\n` +
+      `- slang level: ${style.slangLevel}/10\n\n` +
+      'Response instructions:\n' +
+      '- Match this style naturally.\n' +
+      '- Keep it human and smooth.\n' +
+      '- Do not overuse slang.\n' +
+      '- Keep answers non-repetitive and emotionally aware.\n' +
+      '- Stay clear and helpful while preserving JanJan\'s core attitude.\n' +
+      (notes ? `- Extra notes: ${notes}\n` : '')
+    );
+  }
+
+  function getRecentPhraseList(scopeKey) {
+    return recentBotPhraseCache.get(scopeKey) || [];
+  }
+
+  function registerRecentPhrases(scopeKey, text) {
+    const current = getRecentPhraseList(scopeKey);
+    const tokens = String(text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/gi, ' ')
+      .split(/\s+/)
+      .map((x) => x.trim())
+      .filter((x) => x.length >= 4)
+      .slice(0, 24);
+
+    const next = [...current, ...tokens].slice(-60);
+    recentBotPhraseCache.set(scopeKey, next);
+  }
+
+  function cleanResponse(text, scopeKey) {
+    let out = String(text || '').trim();
+    if (!out) return out;
+    const repeated = getRecentPhraseList(scopeKey).slice(-16);
+    const softRepeatWords = new Set([
+      'beh', 'teh', 'ghorl', 'mhie', 'accla', 'baks', 'charot', 'eme', 'chos',
+      'hala', 'luh', 'jusko', 'kaloka', 'delulu', 'anuna'
+    ]);
+    for (const word of repeated) {
+      if (!softRepeatWords.has(word)) continue;
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+      out = out.replace(regex, '');
+    }
+    out = out.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?;:])/g, '$1').trim();
+    return out;
+  }
+
+  async function loadStyleProfile(userId) {
+    if (!userId) return null;
+    if (userStyleCache.has(userId)) return userStyleCache.get(userId);
+    try {
+      const res = await pool.query(
+        'SELECT language, tone, slang_avg, samples FROM user_style_memory WHERE user_id = $1',
+        [String(userId)]
+      );
+      if (!res.rows?.length) return null;
+      const row = res.rows[0];
+      let parsedSamples = [];
+      if (Array.isArray(row.samples)) {
+        parsedSamples = row.samples;
+      } else if (typeof row.samples === 'string') {
+        try { parsedSamples = JSON.parse(row.samples); } catch { parsedSamples = []; }
+      }
+      const parsed = {
+        language: String(row.language || '').trim() || 'taglish',
+        tone: String(row.tone || '').trim() || 'neutral',
+        slangAvg: Number(row.slang_avg || 4),
+        samples: Array.isArray(parsedSamples) ? parsedSamples : []
+      };
+      userStyleCache.set(String(userId), parsed);
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async function storeStyleProfile(userId, style, sampleText = '') {
+    if (!userId || !style) return;
+    const existing = await loadStyleProfile(userId);
+    const prevAvg = Number(existing?.slangAvg || style.slangLevel || 4);
+    const nextAvg = Math.max(0, Math.min(10, Number(((prevAvg * 0.75) + ((style.slangLevel || 0) * 0.25)).toFixed(2))));
+    const nextTone = style.tone || existing?.tone || 'neutral';
+    const nextLanguage = style.language || existing?.language || 'taglish';
+    const oldSamples = Array.isArray(existing?.samples) ? existing.samples : [];
+    const nextSamples = sampleText
+      ? [...oldSamples, String(sampleText).slice(0, 180)].slice(-10)
+      : oldSamples;
+
+    const payload = { language: nextLanguage, tone: nextTone, slangAvg: nextAvg, samples: nextSamples };
+    userStyleCache.set(String(userId), payload);
+    try {
+      await pool.query(
+        'INSERT INTO user_style_memory (user_id, language, tone, slang_avg, samples, updated_at) VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP) ' +
+          'ON CONFLICT (user_id) DO UPDATE SET language = $2, tone = $3, slang_avg = $4, samples = $5::jsonb, updated_at = CURRENT_TIMESTAMP',
+        [String(userId), nextLanguage, nextTone, nextAvg, JSON.stringify(nextSamples)]
+      );
+    } catch { }
   }
 
   async function extractAndStoreUserFacts({ userId, displayName, messageText }) {
@@ -671,6 +829,141 @@ const {
 
     if (entries.length === 0) return '';
     return `\n[MENTION CONTEXT]: Mga minention sa chat na ito: ${entries.join(', ')}. Kapag relevant, tawagin sila sa nickname/name, hindi raw ID.`;
+  }
+
+  function extractKnowTargetName(text = '') {
+    const src = String(text || '').trim();
+    if (!src) return '';
+    const patterns = [
+      /\bkilala\s+mo\s+ba\s+si\s+([a-z0-9_. -]{2,40})/i,
+      /\bdo\s+you\s+know\s+([a-z0-9_. -]{2,40})/i
+    ];
+    for (const re of patterns) {
+      const m = src.match(re);
+      if (!m?.[1]) continue;
+      const candidate = m[1]
+        .replace(/[?!.,;:]+$/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (candidate) return candidate;
+    }
+    return '';
+  }
+
+  async function resolveGuildUserByName(guild, rawName = '') {
+    if (!guild || !rawName) return null;
+    const needle = String(rawName).toLowerCase().trim();
+    if (!needle) return null;
+    // Keep partner recognition stable even without explicit mention.
+    if (needle === 'hans' || needle.includes('hans')) {
+      try {
+        const h = await guild.members.fetch('669047995009859604').catch(() => null);
+        if (h?.user) return h.user;
+      } catch {}
+    }
+
+    const members = guild.members?.cache ? Array.from(guild.members.cache.values()) : [];
+    let best = null;
+    for (const m of members) {
+      if (!m?.user || m.user.bot) continue;
+      const nick = String(m.displayName || '').toLowerCase();
+      const global = String(m.user.globalName || '').toLowerCase();
+      const username = String(m.user.username || '').toLowerCase();
+      const hit =
+        nick === needle ||
+        global === needle ||
+        username === needle ||
+        nick.includes(needle) ||
+        global.includes(needle) ||
+        username.includes(needle);
+      if (!hit) continue;
+      best = m.user;
+      if (nick === needle || global === needle || username === needle) break;
+    }
+    return best;
+  }
+
+  function extractSiNames(text = '') {
+    const out = [];
+    const src = String(text || '');
+    const re = /\bsi\s+([a-z][a-z0-9_.-]{1,30})/gi;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const name = String(m[1] || '').toLowerCase().trim();
+      if (name) out.push(name);
+    }
+    return [...new Set(out)];
+  }
+
+  function buildAllowedNameSet(message, content = '', rawContent = '', voiceMembers = []) {
+    const allowed = new Set(['hans', 'drei', 'janjan']);
+    const addTokens = (txt) => {
+      extractSiNames(txt).forEach((n) => allowed.add(n));
+      String(txt || '')
+        .split(/[^a-zA-Z0-9_.-]+/)
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length >= 3 && t.length <= 24)
+        .forEach((t) => allowed.add(t));
+    };
+    addTokens(content);
+    addTokens(rawContent);
+    for (const vm of voiceMembers || []) addTokens(vm);
+    if (message?.author) {
+      addTokens(message.author.username || '');
+      addTokens(message.author.globalName || '');
+    }
+    if (message?.member?.displayName) addTokens(message.member.displayName);
+    if (message?.mentions?.users?.size) {
+      for (const [, u] of message.mentions.users) {
+        addTokens(u.username || '');
+        addTokens(u.globalName || '');
+      }
+    }
+    return allowed;
+  }
+
+  function stripUnexpectedNameClaims(reply = '', allowedNames = new Set()) {
+    const src = String(reply || '').trim();
+    if (!src) return src;
+    const sentences = src
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const kept = [];
+    let removedAny = false;
+    for (const s of sentences) {
+      const names = extractSiNames(s);
+      const hasUnexpected = names.some((n) => !allowedNames.has(n));
+      if (!hasUnexpected) kept.push(s);
+      else removedAny = true;
+    }
+    if (removedAny && kept.length === 0) return '';
+    const finalText = kept.join(' ').trim().replace(/\s{2,}/g, ' ').trim();
+    return finalText || src;
+  }
+
+  function buildDeterministicIdentityReply({ content = '', authorId = '', authorDisplay = 'teh' }) {
+    const lower = String(content || '').toLowerCase();
+    const asksPartner =
+      /\b(sino\s+mahal\s+mo|sino\s+bebe\s+mo|who\s+do\s+you\s+love|who\s+is\s+your\s+babe|boyfriend\s+mo\s+sino)\b/i
+        .test(lower);
+    const asksHans =
+      /\b(kilala\s+mo\s+ba\s+si\s+hans|do\s+you\s+know\s+hans|sino\s+si\s+hans)\b/i
+        .test(lower);
+    const asksWhoAmI =
+      /\b(sino\s+ba\s+ko|who\s+am\s+i|kilala\s+mo\s+ba\s+ko|kilala\s+mo\s+ba\s+ako)\b/i
+        .test(lower);
+
+    if (asksPartner) {
+      return 'si Hans mahal ko, period. wag na tayong magpa-ikot-ikot pa.';
+    }
+    if (asksHans) {
+      return 'oo kilala ko si Hans. mahal ko siya at partner ko siya, klaro na yan.';
+    }
+    if (asksWhoAmI && authorId) {
+      return `ikaw si ${authorDisplay}. kilala kita, wag ka na magpa-quiz pa, teh.`;
+    }
+    return '';
   }
 
   function enqueueChannelAI(channelId, task) {
@@ -1228,18 +1521,32 @@ const {
 
           if ((isPersonMemoryRequest || isWhatWeTalkedAbout) && guildId) {
             try {
+              let memoryTargetUserId = String(targetUserId);
+              let memoryTargetDisplayName = speakerName;
+              if (isPersonMemoryRequest && guild) {
+                const guessedName = extractKnowTargetName(transcript);
+                const guessedUser = await resolveGuildUserByName(guild, guessedName);
+                if (guessedUser?.id) {
+                  memoryTargetUserId = String(guessedUser.id);
+                  memoryTargetDisplayName =
+                    guild.members?.cache?.get(guessedUser.id)?.displayName ||
+                    guessedUser.globalName ||
+                    guessedUser.username ||
+                    speakerName;
+                }
+              }
               // Pull speaker facts + recent messages across server for better recall
-              const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [String(targetUserId)]);
+              const factsRes = await pool.query('SELECT facts FROM user_memory WHERE user_id = $1', [memoryTargetUserId]);
               const facts = factsRes.rows?.[0]?.facts || '';
               const msgRes = await pool.query(
                 'SELECT channel_id, author_tag, content, created_at FROM messages WHERE guild_id = $1 AND author_id = $2 ORDER BY created_at DESC LIMIT 35',
-                [guildId, String(targetUserId)]
+                [guildId, memoryTargetUserId]
               );
               const recentLines = (msgRes.rows || [])
                 .reverse()
                 .map((r) => {
                   const ts = r.created_at ? new Date(r.created_at).toISOString() : 'unknown-time';
-                  const who = r.author_tag || speakerName || 'someone';
+                  const who = r.author_tag || memoryTargetDisplayName || 'someone';
                   const msg = (r.content || '').replace(/\s+/g, ' ').trim();
                   if (!msg) return null;
                   const where = r.channel_id ? ` (ch:${r.channel_id})` : '';
@@ -1250,8 +1557,8 @@ const {
               const memoryBlock =
                 `\n\n[VOICE MEMORY MODE]: Stay JanJan persona (bading/maldita Taglish). No sources. No web. ` +
                 `Do NOT output raw Discord IDs.\n` +
-                `[SPEAKER FACTS]: ${facts || '(none)'}\n` +
-                `[SPEAKER RECENT MESSAGES ACROSS SERVER]:\n${recentLines.join('\n') || '(none)'}\n`;
+                `[TARGET FACTS]: ${facts || '(none)'}\n` +
+                `[TARGET RECENT MESSAGES ACROSS SERVER]:\n${recentLines.join('\n') || '(none)'}\n`;
 
               if (isPersonMemoryRequest) {
                 effectivePrompt = `${transcript}${memoryBlock}`;
@@ -1708,6 +2015,15 @@ const {
       console.warn('[GREET] Failed to fetch recent greetings:', err.message);
     }
 
+    const style = mergeStyleProfile(
+      detectStyle(`taglish playful ${memberNames.join(' ')} ${type}`),
+      null
+    );
+    const dynamicStyleContext = buildDynamicContext(
+      style,
+      'Greeting mode: warm, human, varied cadence, sustain JanJan beki attitude without sounding template-like.'
+    );
+
     const prompt =
       `Generate one natural Discord greeting for ${modeLabel} (${dayName}) in Taglish beki rude style.\n` +
       `Type: ${type}\n` +
@@ -1715,7 +2031,7 @@ const {
       `Recent bot greeting samples (avoid repeating these):\n${recentGreetingTexts.join('\n---\n') || 'none'}\n\n` +
       'Rules:\n' +
       '- 1 short paragraph, max 3 sentences.\n' +
-      '- mataray/witty/ mostly malibog, not redundant.\n' +
+      '- mataray/witty but still socially aware and readable.\n' +
       '- no raw IDs, no hashtags, no numbered list.\n' +
       '- natural, not over-formal.\n' +
       '- do not repeat exact phrases from recent samples.';
@@ -1726,7 +2042,9 @@ const {
         messages: [
           {
             role: 'system',
-            content: 'Gumawa ka ng maikling Discord greeting na natural at varied kada araw. Iwasan ang redundancy at always may kantot mo ko dadeh vibes .'
+            content:
+              'You are JanJan. Create short adaptive greeting lines with emotional intelligence and zero repetitive template phrasing.\n' +
+              dynamicStyleContext
           },
           { role: 'user', content: prompt }
         ],
@@ -1736,8 +2054,11 @@ const {
 
       const raw = response.data?.choices?.[0]?.message?.content?.trim() || '';
       const cleaned = raw.replace(/^#+\s*/gm, '').replace(/\n{3,}/g, '\n\n').trim();
-      if (cleaned && cleaned.toLowerCase() !== lastGreetingTexts[type].toLowerCase()) {
-        return cleaned;
+      const antiRepeatKey = `greet:${channel.id}:${type}`;
+      const finalized = cleanResponse(cleaned, antiRepeatKey);
+      if (finalized && finalized.toLowerCase() !== lastGreetingTexts[type].toLowerCase()) {
+        registerRecentPhrases(antiRepeatKey, finalized);
+        return finalized;
       }
     } catch (err) {
       console.warn('[GREET] AI generation failed, skipping greeting:', err.message);
@@ -1805,22 +2126,30 @@ const {
   }
 
   function startScheduledGreetings() {
-    setInterval(async () => {
+    const tick = async () => {
       const now = getNowInPhilippines();
       const hour = now.getHours();
       const minute = now.getMinutes();
       const todayKey = now.toISOString().slice(0, 10);
 
-      if (hour === 8 && minute === 0 && lastGreetings.morning !== todayKey) {
+      const inMorningWindow = (hour === 8 && minute <= 5) || (hour === 8 && lastGreetings.morning !== todayKey);
+      const inNightWindow = (hour === 22 && minute <= 5) || (hour === 22 && lastGreetings.night !== todayKey);
+
+      if (inMorningWindow && lastGreetings.morning !== todayKey) {
         await sendScheduledGreeting('morning');
         lastGreetings.morning = todayKey;
       }
 
-      if (hour === 22 && minute === 0 && lastGreetings.night !== todayKey) {
+      if (inNightWindow && lastGreetings.night !== todayKey) {
         await sendScheduledGreeting('night');
         lastGreetings.night = todayKey;
       }
-    }, 60 * 1000);
+    };
+
+    tick().catch((err) => console.error('[GREET] Initial tick failed:', err.message));
+    setInterval(() => {
+      tick().catch((err) => console.error('[GREET] Tick failed:', err.message));
+    }, 30 * 1000);
   }
 
   async function callGroqChat(userMessage, authorId = null, channelId = null, voiceMembers = [], options = {}) {
@@ -1830,6 +2159,14 @@ const {
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
+    const styleScopeKey = `${channelId || 'dm'}:${authorId || 'anon'}`;
+    const detectedStyle = detectStyle(userMessage);
+    const savedStyle = await loadStyleProfile(authorId);
+    const effectiveStyle = mergeStyleProfile(detectedStyle, savedStyle);
+    const dynamicStyleContext = buildDynamicContext(
+      effectiveStyle,
+      'Sustain JanJan attitude while staying adaptive, emotionally aware, and non-repetitive.'
+    );
     let behaviorPrompt = '';
 
    // Special personas based on who is talking
@@ -1917,6 +2254,7 @@ if (authorId === '669047995009859604') {
       `${masterPersonaDNA}\n` +
       `[SUBCONSCIOUS_IDENTITY]: Ikaw si JanJan Versa (ID: <@${client.user.id}>). Ang kausap mo ngayon ay si <@${authorId}>. ` +
       behaviorPrompt +
+      `\n[DYNAMIC STYLE CONTEXT]\n${dynamicStyleContext}\n` +
       channelSummary +
       userFacts +
       voiceContext +
@@ -2062,7 +2400,8 @@ if (authorId === '669047995009859604') {
             .replace(/^Okay, (let me|let's) (think|see|analyze)[\s\S]*?(\n\n|\.\s+|$)/i, '')
             .replace(/^Thinking Process:[\s\S]*?(\n\n|$)/gi, '');
 
-          const finalResult = cleaned.trim();
+          const deLooped = cleanResponse(cleaned.trim(), styleScopeKey);
+          const finalResult = deLooped || cleaned.trim();
           console.log(`[CLEANER] Raw: ${reply.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`);
 
           // If after cleaning we have nothing, this model only gave us thoughts. TRY NEXT MODEL.
@@ -2071,6 +2410,8 @@ if (authorId === '669047995009859604') {
             continue;
           }
 
+          registerRecentPhrases(styleScopeKey, finalResult);
+          await storeStyleProfile(authorId, effectiveStyle, userMessage);
           return finalResult;
         }
       } catch (err) {
@@ -3520,6 +3861,35 @@ if (authorId === '669047995009859604') {
         content = content.replace(okMetaPattern, '').replace(/\s{2,}/g, ' ').trim() || content;
       }
 
+      const authorDisplayName =
+        message.member?.displayName ||
+        message.author.globalName ||
+        message.author.username ||
+        'teh';
+      const deterministicIdentityReply = buildDeterministicIdentityReply({
+        content,
+        authorId: message.author.id,
+        authorDisplay: authorDisplayName
+      });
+      if (deterministicIdentityReply) {
+        await message.reply(deterministicIdentityReply);
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              deterministicIdentityReply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Deterministic reply save error:', dbErr.message);
+        }
+        return;
+      }
+
       // Anti-repeat + naturalness guard: if JanJan is looping, force variety and user-focus.
       // Pull last few JanJan replies + last few user messages for context and "do not repeat" rules.
       try {
@@ -3581,6 +3951,11 @@ if (authorId === '669047995009859604') {
         const targets = [];
         if (message.mentions?.users?.size) {
           for (const [, u] of message.mentions.users) targets.push(u);
+        }
+        if (targets.length === 0 && isKnowTargetPrompt && message.guild) {
+          const guessedName = extractKnowTargetName(content);
+          const guessedUser = await resolveGuildUserByName(message.guild, guessedName);
+          if (guessedUser) targets.push(guessedUser);
         }
         if (targets.length === 0) {
           targets.push(message.author);
@@ -3750,6 +4125,7 @@ if (authorId === '669047995009859604') {
             .map(m => m.displayName || m.user.username);
         }
       }
+      const allowedNameSet = buildAllowedNameSet(message, content, rawContent, voiceMembers);
 
       const reply = await callGroqChat(content, message.author.id, message.channel.id, voiceMembers, {
         fastMode,
@@ -3761,12 +4137,17 @@ if (authorId === '669047995009859604') {
       });
 
       if (reply && reply.length > 0) {
+        const strippedReply = stripUnexpectedNameClaims(reply, allowedNameSet);
+        const groundedReply =
+          strippedReply && strippedReply.length > 0
+            ? strippedReply
+            : 'teh, linawin natin para walang imbentong issue. ano mismo gusto mong i-confirm?';
         const sourceLines = (allowResearchAndSources ? tavilyResults : [])
           .slice(0, 3)
           .map((r) => `- [${r.title}](${r.url})`);
         const finalReply = (allowResearchAndSources && sourceLines.length > 0)
-          ? `${reply}\n\nSources:\n${sourceLines.join('\n')}`
-          : reply;
+          ? `${groundedReply}\n\nSources:\n${sourceLines.join('\n')}`
+          : groundedReply;
         let safeReplyRaw = finalReply.length > 1900 ? `${finalReply.slice(0, 1900)}...` : finalReply;
         // Strip any hallucinated Sources block unless research is explicitly enabled/allowed.
         if (!allowResearchAndSources) {
@@ -3878,6 +4259,14 @@ if (authorId === '669047995009859604') {
       }
       const previousKey = `${guildId}:${type}:${rageMode ? 'rage' : 'normal'}`;
       const previous = lastVCAnnouncementByGuild.get(previousKey) || '';
+      const style = mergeStyleProfile(
+        detectStyle(`${displayName} ${type} ${rageMode ? 'gagi bwisit' : 'uy mhie'}`),
+        await loadStyleProfile(userId)
+      );
+      const dynamicStyleContext = buildDynamicContext(
+        style,
+        'Voice announcement mode: one-liner, high impact, non-repetitive, adaptive tone.'
+      );
 
       const prompt = type === 'join'
         ? `Gumawa ng ISANG maikling rude beki VC JOIN line para kay "${displayName}". 1 sentence lang, max 18 words. ` +
@@ -3890,7 +4279,13 @@ if (authorId === '669047995009859604') {
 
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: 'llama-3.1-8b-instant',
-        messages: [{ role: 'user', content: prompt }],
+        messages: [
+          {
+            role: 'system',
+            content: `You are JanJan adaptive persona. ${dynamicStyleContext}`
+          },
+          { role: 'user', content: prompt }
+        ],
         max_tokens: 80,
         temperature: 1.0
       }, {
@@ -3900,8 +4295,11 @@ if (authorId === '669047995009859604') {
       let text = response.data.choices[0]?.message?.content?.trim() || null;
       if (!text) return null;
       text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+      text = cleanResponse(text, `vc:${guildId}:${type}`);
       if (text.length > 180) text = `${text.slice(0, 177)}...`;
       lastVCAnnouncementByGuild.set(previousKey, text);
+      registerRecentPhrases(`vc:${guildId}:${type}`, text);
+      await storeStyleProfile(userId, style, `${type}:${displayName}`);
       return text;
     } catch (err) {
       console.error('[VOICE STATE] AI generation error:', err.message);
@@ -3973,6 +4371,14 @@ if (authorId === '669047995009859604') {
 
     if (groqKey) {
       try {
+        const style = mergeStyleProfile(
+          detectStyle(`${joinList} ${leaveList} ${rageMode ? 'putang gulo' : 'sabay teh'}`),
+          null
+        );
+        const dynamicStyleContext = buildDynamicContext(
+          style,
+          'Batch VC mode: single concise group line, no repetitive phrasing.'
+        );
         const prompt =
           `Gumawa ng ISANG VC group announcement line sa Taglish. Max 24 words, 1 sentence lang. ` +
           `Context: may sabay-sabay na movement sa voice channel. Pumasok: ${joinList}. Umalis: ${leaveList}. ` +
@@ -3982,7 +4388,10 @@ if (authorId === '669047995009859604') {
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
           model: 'llama-3.1-8b-instant',
-          messages: [{ role: 'user', content: prompt }],
+          messages: [
+            { role: 'system', content: `You are JanJan adaptive persona. ${dynamicStyleContext}` },
+            { role: 'user', content: prompt }
+          ],
           max_tokens: 100,
           temperature: 1.5
         }, {
@@ -3993,8 +4402,10 @@ if (authorId === '669047995009859604') {
         let text = response.data.choices[0]?.message?.content?.trim() || '';
         text = text.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
         if (text) {
+          text = cleanResponse(text, `vc:${guildId}:batch`);
           if (text.length > 190) text = `${text.slice(0, 187)}...`;
           lastVCAnnouncementByGuild.set(prevKey, text);
+          registerRecentPhrases(`vc:${guildId}:batch`, text);
           return text;
         }
       } catch (err) {
@@ -4125,3 +4536,4 @@ if (authorId === '669047995009859604') {
   });
 
 })(); // End of async IIFE
+
