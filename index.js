@@ -67,6 +67,7 @@ const {
   const researchEnabledGuilds = new Set(); // guildId -> allow web research + sources (admin toggled)
   const lastPortrayByChannel = new Map(); // channelId -> { userId, displayName }
   const topicResetByChannel = new Map(); // channelId -> untilMs
+  const vagueRecallByScope = new Map(); // scopeKey -> { count, ts }
   const userStyleCache = new Map(); // userId -> { language, tone, slangAvg, samples }
   const recentBotPhraseCache = new Map(); // scopeKey -> string[]
   const priorityAutoChatChannels = new Set([
@@ -1024,6 +1025,38 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
       return `ikaw si ${authorDisplay}. kilala kita, wag ka na magpa-quiz pa, teh.`;
     }
     return '';
+  }
+
+  function isVagueMemoryRecallPrompt(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!isMemoryRecallIntent(lower)) return false;
+    const vaguePattern = /\b(yung\s+ano|yung\s+isa|yun|yon|dun|doon|alam\s+mo\s+na|that\s+one)\b/i.test(lower);
+    const hasSpecificCue = /\b(hans|drei|time|oras|\d{1,2}:\d{2}|topic|tao|summary|backread|issue|pangalan|name|kanina sinabi ko na)\b/i.test(lower);
+    return vaguePattern && !hasSpecificCue;
+  }
+
+  function bumpVagueRecallScope(scopeKey) {
+    const now = Date.now();
+    const row = vagueRecallByScope.get(scopeKey) || { count: 0, ts: now };
+    const withinWindow = now - row.ts <= (8 * 60 * 1000);
+    const next = { count: withinWindow ? row.count + 1 : 1, ts: now };
+    vagueRecallByScope.set(scopeKey, next);
+    return next.count;
+  }
+
+  function buildDeterministicMemoryRecallReply({ content = '', scopeKey = 'global' }) {
+    const lower = String(content || '').toLowerCase();
+    if (!isVagueMemoryRecallPrompt(lower)) return '';
+    const count = bumpVagueRecallScope(scopeKey);
+    if (count >= 4) {
+      return 'teh, pang-apat na "yung ano" mo. ayusin mo context mo para di ligwak usapan.';
+    }
+    const lines = [
+      'alin dun, teh? wag ka mema. drop mo 1 keyword or oras para di tayo hulaan.',
+      'bitin sinabi mo, beh. tao ba, topic ba, o anong oras? linawin mo, dali.',
+      'alin ba talaga, accla? one keyword lang para exact at walang sabog.'
+    ];
+    return pickNonRepeatingLine(`vague-recall:${scopeKey}`, lines) || lines[0];
   }
 
   function enqueueChannelAI(channelId, task) {
@@ -3948,6 +3981,30 @@ if (authorId === '669047995009859604') {
         message.author.globalName ||
         message.author.username ||
         'teh';
+      const memoryScopeKey = `${message.channel.id}:${message.author.id}`;
+      const deterministicMemoryReply = buildDeterministicMemoryRecallReply({
+        content,
+        scopeKey: memoryScopeKey
+      });
+      if (deterministicMemoryReply) {
+        registerRecentPhrases(`vague-recall:${memoryScopeKey}`, deterministicMemoryReply);
+        await message.reply(deterministicMemoryReply);
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              deterministicMemoryReply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Memory recall reply save error:', dbErr.message);
+        }
+        return;
+      }
       const resetIntentNow = isTopicResetIntent(content);
       if (resetIntentNow) {
         topicResetByChannel.set(message.channel.id, Date.now() + (15 * 60 * 1000));
