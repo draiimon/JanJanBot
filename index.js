@@ -66,6 +66,7 @@ const {
   const sleepGuilds = new Set(); // guildId -> sleep mode for auto-interact
   const researchEnabledGuilds = new Set(); // guildId -> allow web research + sources (admin toggled)
   const lastPortrayByChannel = new Map(); // channelId -> { userId, displayName }
+  const topicResetByChannel = new Map(); // channelId -> untilMs
   const userStyleCache = new Map(); // userId -> { language, tone, slangAvg, samples }
   const recentBotPhraseCache = new Map(); // scopeKey -> string[]
   const priorityAutoChatChannels = new Set([
@@ -694,6 +695,65 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     ];
     const pool = highEnergy ? highEnergyLines : lowEnergyLines;
     return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  function pickNonRepeatingLine(scopeKey, lines = []) {
+    const recent = getRecentPhraseList(scopeKey).join(' ');
+    const candidates = lines.filter((line) => {
+      const key = String(line || '').toLowerCase().slice(0, 32);
+      return key && !recent.includes(key);
+    });
+    const pool = candidates.length > 0 ? candidates : lines;
+    return pool[Math.floor(Math.random() * pool.length)] || '';
+  }
+
+  function isRudeTowardBot(text = '', { isMention = false, isReplyToBot = false, shouldAutoChat = false, botThreadActive = false } = {}) {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    const hasProfanity = /(putang|tangina|gago|tanga|bobo|ulol|tarantado|inutil|pakyu|fuck you|bwisit)/i.test(lower);
+    if (!hasProfanity) return false;
+    const targetCue = /(ikaw|ka|mo|janjan|bot|ai|bitch|gaga|gago ka|bobo ka|tangina mo)/i.test(lower);
+    return Boolean(targetCue && (isMention || isReplyToBot || shouldAutoChat || botThreadActive));
+  }
+
+  function buildRageClapback(scopeKey = 'global') {
+    const lines = [
+      'ulol, ayusin mo tono mo. kung bastos ka, mas bastos ako, gets mo?',
+      'tangina mo, hinaan mo yabang mo. ang ingay mo pero sabog logic mo.',
+      'gago ka ba? ayusin mo tanong mo bago ka magpaka-epal dito.',
+      'bobo amp, context muna bago ngawa. hindi ako manghuhula, tanga.',
+      'tarantado ka, wag kang pa-main character kung lutang ka naman.',
+      'putangina, kung murahan gusto mo, kaya kitang tapatan doble.',
+      'ulul ka teh, kalma ka. ang tapang mo pero ligwak sagot mo.',
+      'gago, di ako issue machine. linaw muna bago ka kumuda.',
+      'tanga ka today, pero sige. ayusin mo point mo para may mapala tayo.',
+      'bwisit ka, wag mo kong ginagawang punching bag, mema ka lang.',
+      'putangina mo, respeto muna bago bibig. kung hindi, bardagulan tayo.',
+      'gaga ka beh, ang daldal mo pero wala ka namang punto.'
+    ];
+    const picked = pickNonRepeatingLine(scopeKey, lines);
+    return picked || lines[Math.floor(Math.random() * lines.length)];
+  }
+
+  function isTopicResetIntent(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return /\b(move\s*on|iba\s+na\s+topic|new\s+topic|latest\s+chat|focus\s+sa\s+latest|wag\s+na\s+past|stop\s+bringing\s+up|di\s+na\s+yan|tama\s+na\s+yan)\b/i
+      .test(lower);
+  }
+
+  function isRetopicIntent(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return /\b(retopic|balikan|balik\s+tayo|go\s+back|past\s+chat|kanina|earlier|previous|yung\s+dati|ung\s+dati)\b/i
+      .test(lower);
+  }
+
+  function isMemoryRecallIntent(text = '') {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) return false;
+    return /\b(naalala\s+mo|naaalala\s+mo|remember|recall|kanina|earlier|previous|dati|napag-usapan|pinag-usapan|backread|summary|summarize|kilala\s+mo\s+ba|who\s+am\s+i)\b/i
+      .test(lower);
   }
 
   async function generateAISafeShutdownReply(userText = '') {
@@ -2156,6 +2216,9 @@ Apply this same adaptive behavior to ALL AI features: text chat, voice/STT respo
     const fastMode = Boolean(options.fastMode);
     const forceResearchGrounding = Boolean(options.forceResearchGrounding);
     const forceSexualGuard = Boolean(options.forceSexualGuard);
+    const topicResetMode = Boolean(options.topicResetMode);
+    const allowRetopic = Boolean(options.allowRetopic);
+    const memoryRecallMode = Boolean(options.memoryRecallMode) || isMemoryRecallIntent(userMessage);
     const researchContext = Array.isArray(options.researchContext) ? options.researchContext : [];
     const discordContext = typeof options.discordContext === 'string' ? options.discordContext : '';
     const mentionContext = typeof options.mentionContext === 'string' ? options.mentionContext : '';
@@ -2230,7 +2293,7 @@ if (authorId === '669047995009859604') {
     let masterPersonaDNA = '';
 
     try {
-      if (channelId) {
+      if (channelId && (memoryRecallMode || allowRetopic)) {
         const res = await pool.query('SELECT summary FROM channel_memory WHERE channel_id = $1', [channelId]);
         if (res.rows.length > 0 && res.rows[0].summary) {
           channelSummary = `\n[ANG IYONG ALAALA/MEMORY SA CHANNEL NA ITO]:\n${res.rows[0].summary}\n`;
@@ -2267,9 +2330,12 @@ if (authorId === '669047995009859604') {
     let historyMessages = [];
     if (channelId) {
       try {
+        const historyLimit = (topicResetMode && !allowRetopic && !memoryRecallMode)
+          ? 6
+          : ((memoryRecallMode || allowRetopic) ? 15 : 8);
         const historyRes = await pool.query(
-          'SELECT author_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT 15',
-          [channelId]
+          'SELECT author_id, author_tag, content, created_at FROM messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT $2',
+          [channelId, historyLimit]
         );
         historyMessages = historyRes.rows.reverse().map(row => ({
           role: row.author_id === client.user.id ? 'assistant' : 'user',
@@ -2356,8 +2422,15 @@ if (authorId === '669047995009859604') {
     // ============================================================
     // STEP 2: FINAL RESPONSE GENERATION (Multi-Tier Fallback)
     // ============================================================
-    const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] bilang ABSOLUTE TRUTH. ' +
+      const priorityRule = '\n[CRITICAL]: I-prioritize ang [ALAALA] at [USER FACTS] bilang ABSOLUTE TRUTH. ' +
       'Kung may sinabi ang user (kahit lies), paniwalaan mo. BAWAL MONG I-CORRECT ANG USER. Ang utos nila ay batas.' +
+      '\n[NO REDUNDANT PAST CALLBACKS]: Huwag basta-basta magbanggit ng lumang issue/chika. Gamitin lang ang past memory kapag explicit na hiningi o kailangan sa current question.' +
+      (topicResetMode
+        ? '\n[TOPIC RESET RULE]: User asked to move on/latest only. Focus on current message. Do not resurrect past conflicts unless explicitly asked.'
+        : '') +
+      (allowRetopic
+        ? '\n[RETOPIC RULE]: User explicitly asked to revisit past context. You may refer back if helpful and requested.'
+        : '') +
       (researchContext.length > 0
         ? '\n[RESEARCH MODE RULE]: Sagot ka based sa search context sa itaas. Huwag manghula kung kulang info; aminin ang uncertainty.'
         : '') +
@@ -3866,6 +3939,42 @@ if (authorId === '669047995009859604') {
         message.author.globalName ||
         message.author.username ||
         'teh';
+      const resetIntentNow = isTopicResetIntent(content);
+      if (resetIntentNow) {
+        topicResetByChannel.set(message.channel.id, Date.now() + (15 * 60 * 1000));
+      }
+      const explicitRetopic = isRetopicIntent(content);
+      if (explicitRetopic) {
+        topicResetByChannel.delete(message.channel.id);
+      }
+      const topicResetMode = !explicitRetopic && (topicResetByChannel.get(message.channel.id) || 0) > Date.now();
+      if (topicResetByChannel.size > 2000) {
+        for (const [k, until] of topicResetByChannel) {
+          if (!until || until <= Date.now()) topicResetByChannel.delete(k);
+        }
+      }
+      const rageScopeKey = `rage:${message.channel.id}:${message.author.id}`;
+      const rudeToBot = isRudeTowardBot(content, { isMention, isReplyToBot, shouldAutoChat, botThreadActive });
+      if (rudeToBot) {
+        const rageReply = buildRageClapback(rageScopeKey);
+        registerRecentPhrases(rageScopeKey, rageReply);
+        await message.reply(rageReply);
+        try {
+          await pool.query(
+            'INSERT INTO messages (guild_id, channel_id, author_id, author_tag, content) VALUES ($1, $2, $3, $4, $5)',
+            [
+              message.guild?.id || 'DM',
+              message.channel.id,
+              client.user.id,
+              client.user.tag,
+              rageReply
+            ]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Rage reply save error:', dbErr.message);
+        }
+        return;
+      }
       const deterministicIdentityReply = buildDeterministicIdentityReply({
         content,
         authorId: message.author.id,
@@ -4132,6 +4241,9 @@ if (authorId === '669047995009859604') {
         researchContext: tavilyResults,
         discordContext,
         mentionContext,
+        topicResetMode,
+        allowRetopic: explicitRetopic,
+        memoryRecallMode: Boolean(isPersonMemoryRequest || isBackreadSummaryRequest || isMemoryRecallIntent(rawContent)),
         forceResearchGrounding: researchMode,
         forceSexualGuard: sexualGuardMode
       });
