@@ -349,7 +349,7 @@ function loadStaticChunks() {
         section: String(chunk.section || ""),
         keywords,
         content: String(chunk.content || ""),
-        source: String(chunk.source || "Yuma Bot Knowledge"),
+        source: String(chunk.source || "JanJan Bot Knowledge"),
         created_at: null,
         updated_at: null,
         __tokenSet: tokenizeForSearch(fullText),
@@ -586,7 +586,7 @@ function buildContext(rows, maxTokens) {
   const parts = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const src = String(row.source || "Yuma Knowledge Base").trim();
+    const src = String(row.source || "JanJan Knowledge Base").trim();
     const header = `[Source ${i + 1} | ${row.chunk_id} | ${row.section || row.topic || ""} | from: ${src}]`;
     const block = `${header}\n${String(row.content || "").trim()}\n---`;
     const t = estimateTokens(block);

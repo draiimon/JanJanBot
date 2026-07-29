@@ -9,7 +9,7 @@ const { generateWelcomeAttachment } = require('./welcomeCanvas');
 const { getServerDisplayName } = require('./welcomeFonts');
 
 const LOG_CONFIG_PATH = path.join(__dirname, '..', '..', 'data', 'member-log-config.json');
-const WEBHOOK_NAME = 'Yuma Welcome';
+const WEBHOOK_NAME = 'PLAYGROUND Welcome';
 
 /** Role given to every new member on join (unverified default role). */
 const DEFAULT_JOIN_ROLE_ID = '1426806943896309822';
@@ -41,7 +41,7 @@ async function getOrCreateWelcomeWebhook(channel) {
       .createWebhook({
         name: WEBHOOK_NAME,
         avatar: guildIcon,
-        reason: 'Yuma welcome (server identity)',
+        reason: 'PLAYGROUND welcome (server identity)',
       })
       .catch(() => null);
   }

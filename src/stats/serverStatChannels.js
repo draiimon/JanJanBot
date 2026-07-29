@@ -88,13 +88,13 @@ async function computeStat(type, guild) {
 
 async function moveChannelToCategory(channel) {
   if (channel.parentId === TARGET_CATEGORY_ID) return false;
-  await channel.setParent(TARGET_CATEGORY_ID, { lockPermissions: false, reason: 'Yuma stat channels' });
+  await channel.setParent(TARGET_CATEGORY_ID, { lockPermissions: false, reason: 'PLAYGROUND stat channels' });
   return true;
 }
 
 async function renameIfChanged(channel, newName) {
   if (channel.name === newName) return false;
-  await channel.setName(newName, 'Yuma stat refresh');
+  await channel.setName(newName, 'PLAYGROUND stat refresh');
   return true;
 }
 
@@ -130,7 +130,7 @@ async function ensureExtraStatChannel(guild, def) {
           allow: [PermissionFlagsBits.ViewChannel],
         },
       ],
-      reason: 'Yuma stat channel auto-create',
+      reason: 'PLAYGROUND stat channel auto-create',
     });
     console.log(`[STATS] Created ${def.type} channel: ${created.name}`);
     return created;
@@ -178,7 +178,7 @@ async function refreshGuildStats(client) {
   try {
     const category = await guild.channels.fetch(TARGET_CATEGORY_ID).catch(() => null);
     if (category && category.name !== CATEGORY_DISPLAY_NAME) {
-      await category.setName(CATEGORY_DISPLAY_NAME, 'Yuma stat category rename');
+      await category.setName(CATEGORY_DISPLAY_NAME, 'PLAYGROUND stat category rename');
       console.log(`[STATS] Renamed category → ${CATEGORY_DISPLAY_NAME}`);
     }
   } catch (err) {

@@ -43,10 +43,10 @@ async function prepareLogChannel(guild, clientUser) {
   const canManageWebhooks = channel.permissionsFor(me)?.has(PermissionFlagsBits.ManageWebhooks);
   if (!canManageWebhooks || !channel.fetchWebhooks) return { channel, hook: null };
   const hooks = await channel.fetchWebhooks().catch(() => null);
-  let hook = hooks?.find((h) => h?.owner?.id === clientUser.id && h.name === 'Yuma Logs');
+  let hook = hooks?.find((h) => h?.owner?.id === clientUser.id && h.name === 'PLAYGROUND Logs');
   if (!hook) {
     const guildIcon = guild.iconURL({ size: 512, extension: 'png', forceStatic: false }) || undefined;
-    hook = await channel.createWebhook({ name: 'Yuma Logs', avatar: guildIcon, reason: 'Leave log webhook identity' }).catch(() => null);
+    hook = await channel.createWebhook({ name: 'PLAYGROUND Logs', avatar: guildIcon, reason: 'Leave log webhook identity' }).catch(() => null);
   }
   return { channel, hook };
 }
@@ -56,7 +56,7 @@ async function sendLeaveLog(member, result, prepared) {
   if (!channel) return false;
   const user = member.user;
   const guild = member.guild;
-  const guildName = guild.name || 'Yuma';
+  const guildName = guild.name || 'ᴘʟᴀʏ ɢʀᴏᴜɴᴅ';
   const guildIcon = guild.iconURL({ size: 512, extension: 'png', forceStatic: false }) || undefined;
 
   const stayedFor = member.joinedTimestamp

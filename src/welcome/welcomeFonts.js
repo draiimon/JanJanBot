@@ -105,7 +105,7 @@ function getRajdhaniFont() {
 /** Keep Discord guild stylized name — do not strip to ASCII. */
 function getServerDisplayName(guildName) {
   const name = String(guildName || '').trim();
-  return name || 'Yuma';
+  return name || 'ᴘʟᴀʏ ɢʀᴏᴜɴᴅ';
 }
 
 module.exports = {

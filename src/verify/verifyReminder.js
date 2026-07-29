@@ -21,7 +21,7 @@ const UNVERIFIED_ROLE_ID = '1426806943896309822';
 const VERIFY_CHANNEL_ID = '1506243835708313681';
 const INTRO_CHANNEL_ID = '1506284754818044019';
 const GET_ROLE_CHANNEL_ID = '1426746103616897130';
-const WEBHOOK_NAME = 'Yuma Reminder';
+const WEBHOOK_NAME = 'PLAYGROUND Reminder';
 
 /** Cached banner buffer — generated once per process. */
 let bannerBuffer = null;
@@ -251,7 +251,7 @@ async function sendVerificationReminder(client, guildId) {
   if (hook) {
     sent = await hook
       .send({
-        username: 'Yuma',
+        username: 'JanJan',
         avatarURL: guildIcon,
         content,
         embeds: [embed],

@@ -396,7 +396,7 @@ async function buildMemberViewEmbed({ member, targetUser, guild, client }) {
   const embed = new EmbedBuilder()
     .setColor(readiness.ok ? 0x57f287 : 0x5865f2)
     .setAuthor({
-      name: 'Yuma · View',
+      name: 'JanJan · View',
       iconURL: client.user.displayAvatarURL({ size: 128 }),
     })
     .setTitle(member.displayName || targetUser.username)
@@ -408,7 +408,7 @@ async function buildMemberViewEmbed({ member, targetUser, guild, client }) {
   }
 
   embed.setFooter({
-    text: `Yuma · j!view`,
+    text: `JanJan · j!view`,
     iconURL: client.user.displayAvatarURL({ size: 64 }),
   });
   embed.setTimestamp();

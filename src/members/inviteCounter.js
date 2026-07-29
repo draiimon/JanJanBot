@@ -6,7 +6,7 @@ const sc = toSmallCaps; // shorthand
 
 /** Channel where invite events are logged. */
 const INVITE_LOG_CHANNEL_ID = '1427125511699828929';
-const WEBHOOK_NAME = 'Yuma Invites';
+const WEBHOOK_NAME = 'PLAYGROUND Invites';
 
 /** Per-guild cache: Map<inviteCode, { uses, inviterId, inviterTag, channelId }> */
 const inviteCache = new Map();
@@ -87,7 +87,7 @@ async function getLogWebhook(guild, clientUser) {
   if (!hook) {
     const guildIcon = guild.iconURL({ size: 512, extension: 'png', forceStatic: false }) || undefined;
     hook = await channel
-      .createWebhook({ name: WEBHOOK_NAME, avatar: guildIcon, reason: 'Yuma invite counter' })
+      .createWebhook({ name: WEBHOOK_NAME, avatar: guildIcon, reason: 'PLAYGROUND invite counter' })
       .catch((err) => {
         console.warn('[INVITES] createWebhook failed:', err.message);
         return null;
@@ -160,7 +160,7 @@ async function postViaWebhook(guild, clientUser, embed, banner) {
 
   if (hook) {
     await hook
-      .send({ username: 'Yuma', avatarURL: guildIcon, ...payload })
+      .send({ username: 'JanJan', avatarURL: guildIcon, ...payload })
       .catch((err) => console.warn('[INVITES] Webhook send failed:', err.message));
     return true;
   }

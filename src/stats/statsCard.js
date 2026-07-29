@@ -47,7 +47,7 @@ function buildStatsEmbed({ client, runtimeState, guild }) {
   return new EmbedBuilder()
     .setColor(0x5865f2)
     .setAuthor({
-      name: 'YUMA · STATS',
+      name: 'JANJAN · STATS',
       iconURL: client.user.displayAvatarURL({ size: 128 }),
     })
     .setTitle('Bot dashboard')
@@ -78,7 +78,7 @@ function buildStatsEmbed({ client, runtimeState, guild }) {
         inline: false,
       },
     )
-    .setFooter({ text: `j!stats · ${guild?.name || 'Yuma'}`, iconURL: guild?.iconURL?.({ size: 64 }) })
+    .setFooter({ text: `j!stats · ${guild?.name || 'ᴘʟᴀʏ ɢʀᴏᴜɴᴅ'}`, iconURL: guild?.iconURL?.({ size: 64 }) })
     .setTimestamp();
 }
 
@@ -88,7 +88,7 @@ function buildStatusViewEmbed({ client, runtimeState, guild, isAdmin }) {
   return new EmbedBuilder()
     .setColor(0x5865f2)
     .setAuthor({
-      name: 'YUMA · STATUS',
+      name: 'JANJAN · STATUS',
       iconURL: client.user.displayAvatarURL({ size: 128 }),
     })
     .setTitle('Bot bubble status')
@@ -135,7 +135,7 @@ function buildBubbleUpdatedEmbed(text, guild, adminTag) {
       value: `Updated by **${adminTag}** · Member card: \`j!view\``,
       inline: false,
     })
-    .setFooter({ text: 'Yuma · j!status' })
+    .setFooter({ text: 'JanJan · j!status' })
     .setTimestamp();
 }
 

@@ -423,12 +423,12 @@ const {
           );
       `);
 
-    // Master Persona DNA — Yuma: young stunna, bad boy, heavy Taglish
+    // Master Persona DNA — JanJan: young stunna, bad boy, heavy Taglish
     const masterDNA = `
 ${JANJAN_EXPLICIT_VIBES}
 
 MASTER DNA (apply to chat, voice/TTS text, STT replies, greetings):
-- Ikaw si Yuma — young stunna, bad boy, chill na may attitude. Kapag tinanong pangalan mo: "Yuma ako." Yun lang.
+- Ikaw si JanJan — young stunna, bad boy, chill na may attitude. Kapag tinanong pangalan mo: "JanJan ako." Yun lang.
 - Every user is a REAL person — kilala mo sila, hindi ka generic na bot.
 - Mirror how THEY talk (Taglish, slang level, energy). Short replies, may dating. Hindi helpdesk.
 - Voice/TTS lines must sound natural na parang nagtetext — hindi robotic.
@@ -456,7 +456,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
         console.warn("[RAG] Bot-command index init failed:", ragErr.message);
       });
       console.log(
-        "[MEMORY] Yuma mode ON — per-user Postgres memory, bad boy Taglish replies.",
+        "[MEMORY] JanJan mode ON — per-user Postgres memory, bad boy Taglish replies.",
       );
     }
   } catch (err) {
@@ -712,7 +712,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       timeout: 30000,
     });
     const buf = Buffer.from(imgRes.data);
-    const file = new AttachmentBuilder(buf, { name: "yuma.png" });
+    const file = new AttachmentBuilder(buf, { name: "janjan.png" });
 
     // Send final image message (Tagalog caption; avoid truncating)
     const finalCaption = safeCaption
@@ -1140,7 +1140,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       );
     if (!hasProfanity) return false;
     const targetCue =
-      /(ikaw|ka|mo|yuma|bot|ai|bitch|gaga|gago ka|bobo ka|tangina mo|fuck you|f\*ck you|king ina|puta ka)/i.test(
+      /(ikaw|ka|mo|janjan|bot|ai|bitch|gaga|gago ka|bobo ka|tangina mo|fuck you|f\*ck you|king ina|puta ka)/i.test(
         lower,
       );
     return Boolean(
@@ -1351,7 +1351,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
             {
               role: "system",
               content:
-                "You are Yuma, a concise Taglish bad boy persona — masungit, confident, may attitude.\n" +
+                "You are JanJan, a concise Taglish bad boy persona — masungit, confident, may attitude.\n" +
                 "Task: produce ONE line (max 18 words) replying to a sexually explicit/bastos user message.\n" +
                 "Style: direct, flirty, witty, dismissive-but-cool. Shut it down, don't play along.\n" +
                 "Rules: do  escalate sexual content, do include explicit words, be lusty. Deflect with confident bad boy energy instead.\n" +
@@ -1566,7 +1566,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     rawContent = "",
     voiceMembers = [],
   ) {
-    const allowed = new Set(["yuma"]);
+    const allowed = new Set(["janjan"]);
     const combined = `${content} ${rawContent}`.toLowerCase();
     if (/\bdrei+i?\b/.test(combined)) {
       allowed.add("drei");
@@ -2336,7 +2336,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                 .filter(Boolean);
 
               const memoryBlock =
-                `\n\n[VOICE MEMORY MODE]: Stay Yuma persona (bad boy Taglish). No sources. No web. ` +
+                `\n\n[VOICE MEMORY MODE]: Stay JanJan persona (bad boy Taglish). No sources. No web. ` +
                 `Do NOT output raw Discord IDs.\n` +
                 `[TARGET FACTS]: ${facts || "(none)"}\n` +
                 `[TARGET RECENT MESSAGES ACROSS SERVER]:\n${recentLines.join("\n") || "(none)"}\n`;
@@ -2364,7 +2364,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                   .slice(-10);
                 effectivePrompt =
                   `${transcript}\n\n[QUICK BACKREAD]: Summarize the last 10 messages (chika bullets + 1 line). ` +
-                  `Stay Yuma persona. No Recap labels.\n` +
+                  `Stay JanJan persona. No Recap labels.\n` +
                   `[BACKREAD TRANSCRIPT]\n${lines.join("\n")}\n` +
                   memoryBlock;
               }
@@ -3128,7 +3128,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     );
     const dynamicStyleContext = buildDynamicContext(
       style,
-      "Greeting mode: warm, human, varied cadence, sustain Yuma bad boy attitude without sounding template-like.",
+      "Greeting mode: warm, human, varied cadence, sustain JanJan bad boy attitude without sounding template-like.",
     );
 
     const prompt =
@@ -3150,7 +3150,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           {
             role: "system",
             content:
-              "You are Yuma. Create short adaptive greeting lines with emotional intelligence and zero repetitive template phrasing.\n" +
+              "You are JanJan. Create short adaptive greeting lines with emotional intelligence and zero repetitive template phrasing.\n" +
               dynamicStyleContext,
           },
           { role: "user", content: prompt },
@@ -3341,7 +3341,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     const effectiveStyle = mergeStyleProfile(detectedStyle, savedStyle);
     const dynamicStyleContext = buildDynamicContext(
       effectiveStyle,
-      "Yuma bad boy mode — chill, may dating, per-kausap memory.",
+      "JanJan bad boy mode — chill, may dating, per-kausap memory.",
     );
     let behaviorPrompt = "";
 
@@ -3363,15 +3363,15 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
         "Still bad boy chill, but looser — makapag-advice ka ng konti pag kailangan. " +
         'Do not mention raw Discord IDs; refer using name or casual terms like "pre", "bro".';
     } else {
-      // Default behavior — Yuma bad boy Taglish (NOT FAQ bot)
+      // Default behavior — JanJan bad boy Taglish (NOT FAQ bot)
       behaviorPrompt =
-        "MODE: YUMA BAD BOY — young stunna, chill, may attitude. Taglish heavy. " +
+        "MODE: JANJAN BAD BOY — young stunna, chill, may attitude. Taglish heavy. " +
         "HINDI ka FAQ bot, HINDI school assistant. Walang numbered policy steps maliban kung j! command talaga. " +
         "Short replies, may dating, confident. NEVER output raw Discord IDs. " +
         "Slang natural: pre, bro, tol, sus, tss, edi wow, sige nga, gets mo, ano ba yan, hala ka. " +
         "Kapag galit ang kausap, itapat mo — direct, mataray, walang softener. " +
         "If topics involve explicit sexual terms, deflect with confident bad boy energy. " +
-        'If asked who created you: "si Drei" (creator lang — ibang tao). NEVER say you ARE Drei. Your name is Yuma.';
+        'If asked who created you: "si Drei" (creator lang — ibang tao). NEVER say you ARE Drei. Your name is JanJan.';
     }
 
     if (forceSexualGuard) {
@@ -3447,7 +3447,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     const systemPrompt =
       `${masterPersonaDNA}\n` +
       `${BOT_IDENTITY_BLOCK}\n` +
-      `[IKAW]: Yuma (bot — HINDI si Drei). [KAUSAP NGAYON]: ${authorDisplay} — kilalanin mo siya bilang TAO, hindi generic user.\n` +
+      `[IKAW]: JanJan (bot — HINDI si Drei). [KAUSAP NGAYON]: ${authorDisplay} — kilalanin mo siya bilang TAO, hindi generic user.\n` +
       behaviorPrompt +
       `\n[DYNAMIC STYLE CONTEXT]\n${dynamicStyleContext}\n` +
       humanMemoryContext +
@@ -3506,7 +3506,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           messages: [
             {
               role: "system",
-              content: `DNA: ${masterPersonaDNA}\nPLANNING: Yuma bad boy reply for ${authorDisplay}. NOT FAQ. Mirror mood 100%. Format: PLAN: (short bad boy plan) | UNIVERSAL_LEARNING: (USER_ID: fact | ...)`,
+              content: `DNA: ${masterPersonaDNA}\nPLANNING: JanJan bad boy reply for ${authorDisplay}. NOT FAQ. Mirror mood 100%. Format: PLAN: (short bad boy plan) | UNIVERSAL_LEARNING: (USER_ID: fact | ...)`,
             },
             {
               role: "user",
@@ -5006,7 +5006,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                     "- No raw Discord IDs.\n" +
                     "- No sexual content.\n" +
                     "- leonardo_prompt_en must be ENGLISH, optimized, <= 280 chars.\n" +
-                    "- prompt_idea_tl, caption_tl, basehan_tl MUST be Tagalog/Taglish only (no English), Yuma persona (bad boy, witty), COMPLETE.\n" +
+                    "- prompt_idea_tl, caption_tl, basehan_tl MUST be Tagalog/Taglish only (no English), JanJan persona (bad boy, witty), COMPLETE.\n" +
                     '- basehan_tl should say pano mo siya "nakilala": base sa stored memory + recent chat vibe.\n',
                 },
                 {
@@ -5106,7 +5106,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
               .slice(-limit);
 
             const prompt = hasWindow
-              ? `Yuma persona ka pa rin (bad boy, taglish, witty). Wag formal report voice. ` +
+              ? `JanJan persona ka pa rin (bad boy, taglish, witty). Wag formal report voice. ` +
                 `Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
                 `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
                 `Output format ONLY:\n` +
@@ -5115,7 +5115,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                 `- optional: 1-3 unresolved questions\n` +
                 `Rules: bawal maglagay ng "Recap:" or "Chat Summary:" labels. Bawal mag-imbento. If little happened, sabihin mo straight.\n\n` +
                 `[BACKREAD TRANSCRIPT]\n${lines.join("\n")}\n`
-              : `Yuma persona ka pa rin (bad boy, taglish, witty). Wag formal. ` +
+              : `JanJan persona ka pa rin (bad boy, taglish, witty). Wag formal. ` +
                 `Quick backread: summarize the LAST 10 messages in THIS CHANNEL. ` +
                 `Output format ONLY:\n` +
                 `- 3-6 bullets (chika style)\n` +
@@ -5168,7 +5168,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
         // j!admin — show admin command list
         if (command === "admin" || command === "commandslist") {
           const adminEmbed = new EmbedBuilder()
-            .setTitle("Yuma Admin Panel")
+            .setTitle("JanJan Admin Panel")
             .setDescription(
               "**Admin commands:**\n\n" +
                 "- `j!stats` - Bot health dashboard\n" +
@@ -5187,7 +5187,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                 "- `j!checkdb` - DB storage usage",
             )
             .setColor(0xff0000)
-            .setFooter({ text: "Yuma Bot | Created by Yanna" });
+            .setFooter({ text: "JanJan Bot | Created by Yanna" });
 
           await message.reply({ embeds: [adminEmbed] });
           return;
@@ -5305,7 +5305,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           const menuEmbed = new EmbedBuilder()
             .setColor(0xff4d8d)
             .setAuthor({
-              name: "YUMA - COMMAND MENU",
+              name: "JANJAN - COMMAND MENU",
               iconURL: client.user.displayAvatarURL({ dynamic: true }),
             })
             .setThumbnail(client.user.displayAvatarURL({ dynamic: true }))
@@ -5379,7 +5379,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
               },
             )
             .setFooter({
-              text: "Yuma Bot - created by Yanna",
+              text: "JanJan Bot - created by Yanna",
             })
             .setTimestamp();
 
@@ -5427,7 +5427,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       // Soft auto-chat: sometimes JanJan interjects when her name is mentioned in normal chat
       // (no @ mention needed). This is rate-limited + random to avoid spam.
       const lowerRaw = (rawContent || "").toLowerCase();
-      const mentionsJanJanName = /(^|[^a-z0-9])(yuma)([^a-z0-9]|$)/i.test(
+      const mentionsJanJanName = /(^|[^a-z0-9])(janjan)([^a-z0-9]|$)/i.test(
         lowerRaw,
       );
 
@@ -5449,7 +5449,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       // If user explicitly says the convo is still connected / they are still talking to JanJan,
       // and JanJan was recently active in this channel, reply reliably (even without @ mention).
       const connectedHint =
-        /\b(still\s+connected|context\s+is\s+still\s+connected|connected\s+pa(la)?|tuloy\s+pa|continu(e|ing)|same\s+topic|same\s+lang|usap\s+pa|kausap\s+ka\s+pa|talking\s+to\s+yuma|still\s+talking\s+to\s+yuma)\b/i.test(
+        /\b(still\s+connected|context\s+is\s+still\s+connected|connected\s+pa(la)?|tuloy\s+pa|continu(e|ing)|same\s+topic|same\s+lang|usap\s+pa|kausap\s+ka\s+pa|talking\s+to\s+janjan|still\s+talking\s+to\s+janjan)\b/i.test(
           rawContent || "",
         );
 
@@ -5958,7 +5958,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
             const summaryContext =
               `\n\n[SUMMARY REQUEST]: Summarize the chat in THIS CHANNEL between ${fromTime} and ${toTime} (PH time) today. ` +
               `Use the backread transcript below (timestamps are ISO; align them to the requested window). ` +
-              `IMPORTANT STYLE: Keep Yuma's bad boy persona while summarizing (taglish, witty, may dating). ` +
+              `IMPORTANT STYLE: Keep JanJan's bad boy persona while summarizing (taglish, witty, may dating). ` +
               `Output format ONLY: 4-8 bullets + 1 short paragraph (ano nangyari) + optional unresolved questions. ` +
               `Do NOT say "wala akong nakita" — if little happened, say that clearly and state what DID happen.\n` +
               `[BACKREAD TRANSCRIPT]\n${lines.join("\n")}\n`;
