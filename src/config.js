@@ -35,8 +35,18 @@ function parseInteger(value, fallback) {
     return fallback;
   }
 
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  const normalized = String(value).trim();
+  if (!/^-?\d+$/.test(normalized)) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
+function parsePort(value, fallback = 3000) {
+  const parsed = parseInteger(value, fallback);
+  return parsed >= 1 && parsed <= 65535 ? parsed : fallback;
 }
 
 function parseHostPort(value, fallbackHost = '', fallbackPort = 2333) {
@@ -92,9 +102,12 @@ function loadConfig(env = process.env) {
     tavilyApiKey: env.TAVILY_API_KEY || '',
     groqKeys,
     leonardoApiKey: env.LEONARDO_API_KEY ? String(env.LEONARDO_API_KEY).trim() : '',
-    port: parseInteger(env.PORT, 3000),
+    port: parsePort(env.PORT, 3000),
     webEnabled: parseBoolean(env.WEB_ENABLED, Boolean(env.PORT || publicBaseUrl)),
     publicBaseUrl,
+    listenPasskey: normalizeSecret(env.LISTEN_PASSKEY),
+    sessionSecret: normalizeSecret(env.SESSION_SECRET),
+    groqStartupProbeEnabled: parseBoolean(env.GROQ_STARTUP_PROBE_ENABLED, false),
     selfPingEnabled: parseBoolean(env.SELF_PING_ENABLED, false),
     selfPingIntervalMs: parseInteger(env.SELF_PING_INTERVAL_MS || env.SELF_PING_INTERVAL, 14 * 60 * 1000),
     nodeEnv: env.NODE_ENV || 'production',

@@ -13,7 +13,7 @@ A self-hosted Discord bot with persistent AI memory, voice channel integration, 
 - **Image Generation** — Generates images via Leonardo AI on command.
 - **Web Research** — Pulls live search results via Tavily and summarizes them.
 - **Channel Summarizer** — Backread and summarize recent chat history on demand.
-- **Health Dashboard** — `/health` endpoint exposes bot status, DB state, voice connection, memory usage, and uptime.
+- **Health Endpoints** — `/health` provides a minimal public liveness check, `/ready` reports dependency readiness, and authenticated `/diagnostics` provides operational detail.
 - **Cosmetic Voice State** — Bot appears muted and deafened in Discord while still fully functional internally.
 
 ---
@@ -47,38 +47,48 @@ Copy `.env.example` to `.env` and fill in:
 | `LEONARDO_API_KEY` | ❌ | For image generation |
 | `DEEPSEEK_API_KEY` | ❌ | Fallback AI model |
 | `WEB_ENABLED` | ❌ | Set to `true` to enable the web dashboard |
+| `LISTEN_PASSKEY` | If web enabled | Strong listener access passphrase, at least 16 characters |
+| `SESSION_SECRET` | If web enabled | Unique session signing secret, at least 32 characters |
+| `GROQ_STARTUP_PROBE_ENABLED` | ❌ | Defaults to `false`; if enabled, sends one small billable request per configured Groq key at each startup |
 
+Never commit `.env` or paste secret values into logs or issue reports. Use Render's environment settings for deployment secrets. The example file contains placeholders only.
 
 ---
 
 ## Running Locally
 
 ```bash
-npm install
+npm ci
+npm test
+npm run check
 npm start
 ```
 
-The bot connects to Discord and optionally starts a web server on port `3000` (or `PORT` env var).
+The bot connects to Discord and optionally starts a web server on port `3000` (or `PORT` env var). Unit tests use fakes and do not connect to Discord or call paid providers. `npm run test:groq-keys` is an optional real API smoke test and may use provider credits.
 
 ---
 
 ## Deploying to Render
 
-A `render.yaml` is included for one-click Docker deployment.
+A `render.yaml` is included for Docker deployment; `render.fast.yaml` is the native Node alternative and installs exactly from the lockfile.
 
-1. Create a new service from `render.yaml` in your Render dashboard.
-2. Add all required environment variables.
-3. Deploy — the bot starts automatically and reconnects to the last saved voice channel.
+1. Create a Render web service from `render.yaml` (Docker) or `render.fast.yaml` (native Node).
+2. Set `DISCORD_TOKEN`, `DATABASE_URL`, at least one `GROQ_API_KEY` slot, `SESSION_SECRET`, and `LISTEN_PASSKEY` in Render's environment settings. Add optional API keys only for features you use.
+3. Deploy. The service needs outbound access to Discord and the configured providers; Render sets `PORT` automatically.
+
+The included manifests select Render's free plan. Free services can spin down when idle, so they are not suitable for a Discord bot that must maintain a continuous gateway/voice connection. Use an always-on paid instance for reliable 24/7 operation; do not enable self-pinging as a workaround for free-tier idling. Local/container filesystems are not durable storage, so keep persistent state in PostgreSQL.
 
 Web endpoints (when `WEB_ENABLED=true`):
 
 | Endpoint | Description |
 |---|---|
 | `/` | Terminal-style status dashboard |
-| `/listen` | Live voice channel audio stream |
-| `/health` | Full diagnostics JSON |
+| `/listen` | Passkey sign-in for live voice audio; listener WebSocket and control APIs require a signed session |
+| `/health` | Minimal public liveness check for Render |
 | `/ping` | Uptime check |
-| `/ready` | Discord client readiness check |
+| `/ready` | Discord, database, and shutdown readiness check |
+| `/diagnostics` | Detailed runtime diagnostics; requires listener session |
+| `/voice-status` | Voice stream status; requires listener session |
 
 ---
 

@@ -1,17 +1,15 @@
 function toErrorPayload(source, error) {
-  if (error instanceof Error) {
-    return {
-      source,
-      message: error.message,
-      stack: error.stack || null,
-      at: new Date().toISOString()
-    };
-  }
-
+  const errorCode = typeof error?.code === 'string' &&
+    /^[A-Za-z0-9_-]{1,40}$/.test(error.code)
+    ? error.code
+    : null;
   return {
     source,
-    message: typeof error === 'string' ? error : JSON.stringify(error),
-    stack: null,
+    errorType: typeof error?.name === 'string' &&
+      /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(error.name)
+      ? error.name
+      : 'Error',
+    errorCode,
     at: new Date().toISOString()
   };
 }
@@ -20,10 +18,14 @@ function registerProcessLifecycle({ runtimeState, shutdown }) {
   const handleUnhandled = (source) => (error) => {
     const payload = toErrorPayload(source, error);
     runtimeState.process.lastUnhandledError = payload;
-    console.error(`[PROCESS] ${source}:`, payload.message);
-    if (payload.stack) {
-      console.error(payload.stack);
-    }
+    console.error(JSON.stringify({
+      timestamp: payload.at,
+      severity: 'ERROR',
+      event: 'process_error',
+      source: payload.source,
+      errorType: payload.errorType,
+      errorCode: payload.errorCode
+    }));
   };
 
   const onUnhandledRejection = handleUnhandled('unhandledRejection');
@@ -47,10 +49,14 @@ function registerProcessLifecycle({ runtimeState, shutdown }) {
     } catch (error) {
       const payload = toErrorPayload(`shutdown:${signal}`, error);
       runtimeState.process.lastUnhandledError = payload;
-      console.error(`[PROCESS] Shutdown error: ${payload.message}`);
-      if (payload.stack) {
-        console.error(payload.stack);
-      }
+      console.error(JSON.stringify({
+        timestamp: payload.at,
+        severity: 'ERROR',
+        event: 'process_shutdown_error',
+        source: payload.source,
+        errorType: payload.errorType,
+        errorCode: payload.errorCode
+      }));
     } finally {
       process.exit(0);
     }

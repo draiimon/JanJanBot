@@ -1,6 +1,7 @@
 const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
+const { getGroqErrorMeta } = require('../ai/groqClient');
 
 /**
  * Groq Whisper STT with same key rotation as chat (401/429).
@@ -62,7 +63,10 @@ async function transcribeWithGroq(wavFile, groqKeys, { startIndex = 0, invalidIn
         attempts += 1;
         continue;
       }
-      throw err;
+      const meta = getGroqErrorMeta(err);
+      const safeError = new Error(`Groq transcription failed (${meta.category}).`);
+      safeError.code = `GROQ_${meta.category.toUpperCase()}`;
+      throw safeError;
     }
   }
 

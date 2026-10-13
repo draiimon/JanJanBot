@@ -16,8 +16,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     libpangocairo-1.0-0 \
     libgdk-pixbuf-2.0-0 \
     librsvg2-2 \
-    libharfbuzz0b \
-    && pip3 install --no-cache-dir edge-tts --break-system-packages
+    libharfbuzz0b
 
 FROM base AS deps
 WORKDIR /app
@@ -33,7 +32,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-RUN mkdir -p /app/data \
+RUN pip3 install --no-cache-dir --requirement /app/requirements.txt --break-system-packages \
+    && mkdir -p /app/data \
     && chown -R node:node /app
 
 USER node

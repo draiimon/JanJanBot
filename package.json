@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "check": "node --check index.js && node --check src/verify/verifySystem.js && node --check src/verify/badingVerifyEmbed.js && node --check src/config.js && node --check src/runtime/state.js && node --check src/runtime/processLifecycle.js && node --check src/runtime/startSelfPing.js && node --check src/server/createWebServer.js && node --check src/voice/generateTtsAudio.js && node --check src/voice/ensureVoiceReady.js && node --check src/voice/joinTtsVoice.js && node --check src/voice/formatVoiceConnectError.js && node --check src/voice/transcribeGroq.js && node --check src/voice/waitConnectionReady.js && node --check src/rag/botIdentity.js && node --check src/rag/conversationMode.js && node --check src/rag/ragService.js && node --check src/rag/embeddingService.js && node --check src/rag/ensureRagSchema.js && node --check src/rag/humanMemory.js && node --check src/rag/janjanVibes.js && node --check src/rag/botHelpRag.js && node --check scripts/seed-rag-chunks.js",
+    "check": "node --check index.js && node --check src/ai/groqClient.js && node --check src/server/createWebServer.js && node --check src/server/listenAuth.js && node --check src/verify/verifySystem.js && node --check src/verify/badingVerifyEmbed.js && node --check src/config.js && node --check src/runtime/state.js && node --check src/runtime/processLifecycle.js && node --check src/runtime/startSelfPing.js && node --check src/voice/generateTtsAudio.js && node --check src/voice/ensureVoiceReady.js && node --check src/voice/joinTtsVoice.js && node --check src/voice/formatVoiceConnectError.js && node --check src/voice/transcribeGroq.js && node --check src/voice/waitConnectionReady.js && node --check src/rag/botIdentity.js && node --check src/rag/conversationMode.js && node --check src/rag/ragService.js && node --check src/rag/embeddingService.js && node --check src/rag/ensureRagSchema.js && node --check src/rag/humanMemory.js && node --check src/rag/janjanVibes.js && node --check src/rag/botHelpRag.js && node --check scripts/seed-rag-chunks.js",
+    "test": "node --test tests/*.test.js",
     "test:groq-keys": "node scripts/test-groq-keys.mjs",
     "test:voice": "node scripts/test-voice-stack.mjs",
     "verify:setup": "node scripts/setup-verify-channel.mjs",
@@ -15,7 +16,7 @@
     "rag:reembed": "node scripts/seed-rag-chunks.js --reembed"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": "22.x"
   },
   "keywords": [
     "discord",
@@ -34,8 +35,8 @@
     "@noble/ciphers": "^1.3.0",
     "@snazzah/davey": "latest",
     "@snazzah/davey-linux-x64-gnu": "^0.1.11",
-    "axios": "^1.18.1",
-    "discord.js": "^14.22.1",
+    "axios": "^1.20.0",
+    "discord.js": "^14.27.0",
     "dotenv": "^16.6.1",
     "edge-tts-universal": "^1.4.0",
     "form-data": "^4.0.6",
@@ -43,8 +44,13 @@
     "libsodium-wrappers": "^0.7.16",
     "opusscript": "^0.0.8",
     "pg": "^8.22.0",
-    "sharp": "^0.34.5",
+    "prism-media": "^1.3.5",
+    "sharp": "^0.35.5",
     "sodium-native": "^4.3.3",
     "ws": "^8.21.0"
+  },
+  "overrides": {
+    "protobufjs": "^7.6.5",
+    "undici": "^6.29.0"
   }
 }

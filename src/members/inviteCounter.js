@@ -7,6 +7,7 @@ const sc = toSmallCaps; // shorthand
 /** Channel where invite events are logged. */
 const INVITE_LOG_CHANNEL_ID = '1427125511699828929';
 const WEBHOOK_NAME = 'PLAYGROUND Invites';
+const WEBHOOK_DISPLAY_NAME = 'ᴘʟᴀʏ ɢʀᴏᴜɴᴅ';
 
 /** Per-guild cache: Map<inviteCode, { uses, inviterId, inviterTag, channelId }> */
 const inviteCache = new Map();
@@ -159,13 +160,21 @@ async function postViaWebhook(guild, clientUser, embed, banner) {
   const payload = { embeds: [embed], files };
 
   if (hook) {
-    await hook
-      .send({ username: 'JanJan', avatarURL: guildIcon, ...payload })
-      .catch((err) => console.warn('[INVITES] Webhook send failed:', err.message));
-    return true;
+    try {
+      await hook.send({ username: WEBHOOK_DISPLAY_NAME, avatarURL: guildIcon, ...payload });
+      return true;
+    } catch (err) {
+      console.warn('[INVITES] Webhook send failed:', err.message);
+      return false;
+    }
   }
-  await channel.send(payload).catch((err) => console.warn('[INVITES] Channel send failed:', err.message));
-  return true;
+  try {
+    await channel.send(payload);
+    return true;
+  } catch (err) {
+    console.warn('[INVITES] Channel send failed:', err.message);
+    return false;
+  }
 }
 
 function buildInviteCreatedEmbed(invite) {
@@ -329,4 +338,5 @@ module.exports = {
   registerInviteCounterHandlers,
   refreshGuildInvites,
   INVITE_LOG_CHANNEL_ID,
+  postViaWebhook,
 };

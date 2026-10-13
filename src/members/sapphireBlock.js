@@ -31,7 +31,7 @@ function registerSapphireBlockHandlers(client) {
     if (message.channelId !== BLOCK_CHANNEL_ID) return;
     if (!isSapphire(message.author)) return;
     await message.delete().catch(() => {});
-    console.log(`[SAPPHIRE-BLOCK] Deleted message from ${message.author.username} in ${BLOCK_CHANNEL_ID}`);
+    console.log('[SAPPHIRE-BLOCK] Removed a matching message from the configured channel.');
   });
 
   // Also sweep on every new member join (catches messages already posted)

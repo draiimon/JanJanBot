@@ -51,12 +51,12 @@ function testKey(key) {
           }
           resolve({
             status: res.statusCode,
-            message: parsed.error?.message || null,
           });
         });
       },
     );
-    req.on('error', (e) => resolve({ status: 0, message: e.message }));
+    req.on('timeout', () => req.destroy(new Error('request timeout')));
+    req.on('error', () => resolve({ status: 0 }));
     req.write(body);
     req.end();
   });
@@ -84,7 +84,5 @@ for (const name of slots) {
     continue;
   }
   const r = await testKey(key);
-  console.log(
-    `${name}: ${r.status === 200 ? 'OK' : 'FAIL'} HTTP ${r.status}${r.message ? ` — ${r.message}` : ''}`,
-  );
+  console.log(`${name}: ${r.status === 200 ? 'OK' : 'FAIL'} HTTP ${r.status}`);
 }

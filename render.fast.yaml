@@ -11,7 +11,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm install --omit=dev --no-fund --no-audit
+    buildCommand: npm ci --omit=dev --no-fund --no-audit
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
@@ -20,6 +20,8 @@ services:
         value: production
       - key: WEB_ENABLED
         value: "true"
+      - key: GROQ_STARTUP_PROBE_ENABLED
+        value: "false"
       - key: RAG_ENABLED
         value: "true"
       - key: GEMINI_EMBED_MODEL
@@ -61,4 +63,6 @@ services:
       - key: DEEPSEEK_BUDGET_TOKENS
         value: "5000000"
       - key: SESSION_SECRET
+        sync: false
+      - key: LISTEN_PASSKEY
         sync: false

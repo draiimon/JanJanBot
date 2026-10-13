@@ -3,13 +3,6 @@ const { GoogleGenAI } = require("@google/genai");
 const EMBED_MODEL = String(process.env.GEMINI_EMBED_MODEL || "gemini-embedding-001").trim();
 const EMBED_DIMENSIONS = Math.max(64, Number(process.env.GEMINI_EMBED_DIMENSIONS || 768));
 
-function maskKey(key) {
-  const text = String(key || "").trim();
-  if (!text) return "(none)";
-  if (text.length <= 10) return `${text.slice(0, 2)}***${text.slice(-2)}`;
-  return `${text.slice(0, 4)}...${text.slice(-4)}`;
-}
-
 function buildEmbedPool() {
   const entries = [];
   const keys = [
@@ -26,11 +19,9 @@ function buildEmbedPool() {
     entries.push({ name, key, cooldownUntil: 0, client: null });
   }
   if (entries.length) {
-    console.log(`[embed-pool] loaded ${entries.length} embed key(s): ${entries.map((e) => maskKey(e.key)).join(", ")}`);
+    console.log(`[embed-pool] loaded ${entries.length} embed credential slot(s): ${entries.map((e) => e.name).join(", ")}`);
   } else {
-    console.warn(
-      "[embed-pool] no embed keys found. Set GOOGLE_API_KEY_10, GOOGLE_API_KEY_11, GEMINI_API_KEY, or GOOGLE_API_KEY.",
-    );
+    console.warn("[embed-pool] No Gemini embedding credentials configured in the environment.");
   }
   return entries;
 }
@@ -63,7 +54,7 @@ const RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
 async function runWithEmbedFallback(fn) {
   if (!embedPool.length) {
     throw new Error(
-      "No embed keys configured. Set GOOGLE_API_KEY_10, GOOGLE_API_KEY_11, GEMINI_API_KEY, or GOOGLE_API_KEY.",
+      "No Gemini embedding credentials configured in the environment.",
     );
   }
 
@@ -72,7 +63,7 @@ async function runWithEmbedFallback(fn) {
 
   for (const entry of embedPool) {
     if (entry.cooldownUntil > now) {
-      console.warn(`[embed-pool] ${maskKey(entry.key)} is cooling down, skipping.`);
+      console.warn(`[embed-pool] ${entry.name} is cooling down, skipping.`);
       continue;
     }
 
@@ -84,10 +75,10 @@ async function runWithEmbedFallback(fn) {
       lastError = err;
       if (isRateLimit(err)) {
         entry.cooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-        console.warn(`[embed-pool] ${maskKey(entry.key)} rate-limited, cooling down ${RATE_LIMIT_COOLDOWN_MS / 1000}s. Trying next key.`);
+        console.warn(`[embed-pool] ${entry.name} rate-limited, cooling down ${RATE_LIMIT_COOLDOWN_MS / 1000}s. Trying next key.`);
       } else if (isAuthError(err)) {
         entry.cooldownUntil = Date.now() + 6 * 60 * 60 * 1000;
-        console.error(`[embed-pool] ${maskKey(entry.key)} auth error (leaked/invalid), disabling for 6h.`);
+        console.error(`[embed-pool] ${entry.name} rejected by provider, disabling for 6h.`);
       } else {
         throw err;
       }

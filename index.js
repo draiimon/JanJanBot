@@ -34,6 +34,11 @@ const davePreloadPromise = import("@snazzah/davey").catch((e) => {
 if (!process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = "ffmpeg";
 
 const { loadConfig } = require("./src/config");
+const {
+  createGroqClient,
+  getGroqErrorMeta,
+  extractGroqContent,
+} = require("./src/ai/groqClient");
 const { createRuntimeState } = require("./src/runtime/state");
 const { createWebServer } = require("./src/server/createWebServer");
 const { registerProcessLifecycle } = require("./src/runtime/processLifecycle");
@@ -296,7 +301,10 @@ const {
 
   const pool = new Pool({
     connectionString: config.databaseUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: true },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
   });
 
   pool.on("connect", () => {
@@ -308,8 +316,16 @@ const {
 
   pool.on("error", (err) => {
     runtimeState.database.connected = false;
-    runtimeState.database.lastError = err.message;
-    console.error("[DB] Pool error:", err.message);
+    const errorCode = /^[A-Z0-9_-]{1,32}$/.test(String(err.code || ""))
+      ? String(err.code)
+      : "unknown";
+    runtimeState.database.lastError = errorCode;
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      severity: "ERROR",
+      event: "database_pool_error",
+      errorCode,
+    }));
   });
 
   const scheduledVoiceRejoins = new Map(); // guildId -> { guildId, channelId, executeAt, timeout }
@@ -461,33 +477,43 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     }
   } catch (err) {
     runtimeState.database.connected = false;
-    runtimeState.database.lastError = err.message;
-    console.error("[DB] Connection/Init Error:", err.message);
+    const errorCode = /^[A-Z0-9_-]{1,32}$/.test(String(err.code || ""))
+      ? String(err.code)
+      : "connection_or_initialization_failed";
+    runtimeState.database.lastError = errorCode;
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      severity: "ERROR",
+      event: "database_connection_or_init_failed",
+      errorCode,
+    }));
   } finally {
     dbClient?.release();
   }
-  // API Key Rotation Persistence
-  let currentKeyIndex = 0;
-  const invalidGroqKeyIndices = new Set();
-  const apiUrl = "https://api.groq.com/openai/v1/chat/completions";
+  // Provider state is shared with the STT key-rotation path.
+  const groqState = { currentKeyIndex: 0, invalidIndices: new Set() };
+  const invalidGroqKeyIndices = groqState.invalidIndices;
+  const groqClient = createGroqClient({
+    axios,
+    keys: GROQ_KEYS,
+    state: groqState,
+    logger: (record) => console.log(JSON.stringify(record)),
+  });
 
   console.log(`[GROQ] ${GROQ_KEYS.length} API key(s) loaded for rotation.`);
 
-  function maskGroqKey(key) {
-    if (!key || key.length < 12) return "(invalid)";
-    return `${key.slice(0, 8)}...${key.slice(-4)}`;
-  }
-
-  function groqErrorMeta(err) {
-    return {
-      status: err.response?.status || null,
-      code: err.response?.data?.error?.code || null,
-      message:
-        err.response?.data?.error?.message || err.message || "unknown error",
-    };
-  }
-
   async function probeGroqKeysAtStartup() {
+    if (!config.groqStartupProbeEnabled) {
+      console.log(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        severity: "INFO",
+        event: "provider_startup_probe_skipped",
+        provider: "groq",
+        reason: "disabled_by_configuration",
+      }));
+      return;
+    }
+
     const probePayload = {
       model: "llama-3.1-8b-instant",
       messages: [{ role: "user", content: "ok" }],
@@ -507,13 +533,29 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
         });
         working++;
         console.log(
-          `[GROQ] Startup probe key ${i + 1} (${maskGroqKey(key)}): ok`,
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            severity: "INFO",
+            event: "provider_startup_probe",
+            provider: "groq",
+            keyIndex: i + 1,
+            outcome: "success",
+          }),
         );
       } catch (err) {
-        const { status, message } = groqErrorMeta(err);
-        invalidGroqKeyIndices.add(i);
+        const meta = getGroqErrorMeta(err);
+        if (meta.category === "invalid_credentials") invalidGroqKeyIndices.add(i);
         console.warn(
-          `[GROQ] Startup probe key ${i + 1} (${maskGroqKey(key)}): fail HTTP ${status || "—"} — ${message}`,
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            severity: "WARNING",
+            event: "provider_startup_probe",
+            provider: "groq",
+            keyIndex: i + 1,
+            statusCode: meta.status,
+            errorCategory: meta.category,
+            outcome: "failure",
+          }),
         );
       }
     }
@@ -526,75 +568,15 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       console.log(
         `[GROQ] Startup probe: ${working}/${GROQ_KEYS.length} key(s) working.`,
       );
-      currentKeyIndex = GROQ_KEYS.findIndex(
+      groqState.currentKeyIndex = GROQ_KEYS.findIndex(
         (_, idx) => !invalidGroqKeyIndices.has(idx),
       );
-      if (currentKeyIndex < 0) currentKeyIndex = 0;
+      if (groqState.currentKeyIndex < 0) groqState.currentKeyIndex = 0;
     }
   }
 
-  /**
-   * Helper to call Groq with automatic key rotation (429 rate limit + 401 invalid key).
-   */
-  async function performGroqRequest(payload) {
-    if (!GROQ_KEYS.length) {
-      throw new Error("No Groq API key configured.");
-    }
-
-    const maxKeys = GROQ_KEYS.length;
-    let attempts = 0;
-
-    while (attempts < maxKeys) {
-      if (invalidGroqKeyIndices.size >= maxKeys) {
-        throw new Error(
-          "All Groq API keys are invalid (401). Update GROQ_API_KEY* in Render Environment.",
-        );
-      }
-
-      const key = GROQ_KEYS[currentKeyIndex];
-      if (!key || invalidGroqKeyIndices.has(currentKeyIndex)) {
-        currentKeyIndex = (currentKeyIndex + 1) % maxKeys;
-        attempts++;
-        continue;
-      }
-
-      try {
-        const res = await axios.post(apiUrl, payload, {
-          headers: {
-            Authorization: `Bearer ${key}`,
-            "Content-Type": "application/json",
-          },
-        });
-        return res;
-      } catch (err) {
-        const { status, code, message } = groqErrorMeta(err);
-        const isRateLimit = status === 429 || code === "rate_limit_exceeded";
-        const isInvalidKey =
-          status === 401 ||
-          code === "invalid_api_key" ||
-          /invalid api key/i.test(message);
-
-        if ((isRateLimit || isInvalidKey) && maxKeys > 1) {
-          if (isInvalidKey) {
-            invalidGroqKeyIndices.add(currentKeyIndex);
-            console.warn(
-              `[GROQ] Key ${currentKeyIndex + 1} (${maskGroqKey(key)}) invalid (401). Rotating to next key...`,
-            );
-          } else {
-            console.warn(
-              `[GROQ] Key ${currentKeyIndex + 1} rate limited. Rotating to next key...`,
-            );
-          }
-          currentKeyIndex = (currentKeyIndex + 1) % maxKeys;
-          attempts++;
-          continue;
-        }
-
-        throw err;
-      }
-    }
-
-    throw new Error("All Groq keys exhausted or invalid.");
+  async function performGroqRequest(payload, context = {}) {
+    return groqClient.request(payload, context);
   }
 
   // ============================================================
@@ -730,7 +712,10 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
   }
 
   async function performChatRequest(payload, options = {}) {
-    return performGroqRequest(payload);
+    return performGroqRequest(payload, {
+      route: options.route || "discord_chat",
+      requestId: options.requestId,
+    });
   }
 
   const researchKeywords = [
@@ -1422,8 +1407,16 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
         }));
     } catch (err) {
       console.warn(
-        "[TAVILY] Search failed:",
-        err.response?.status || err.message,
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          severity: "WARNING",
+          event: "external_search_failed",
+          provider: "tavily",
+          statusCode: err.response?.status || null,
+          errorCode: /^[A-Z0-9_-]{1,32}$/.test(String(err.code || ""))
+            ? String(err.code)
+            : null,
+        }),
       );
       return [];
     }
@@ -1731,8 +1724,14 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       })
       .catch((err) => {
         console.error(
-          `[AI-QUEUE] Channel ${channelId} task error:`,
-          err.message,
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            severity: "ERROR",
+            event: "ai_queue_task_failed",
+            errorCode: /^[A-Z0-9_-]{1,32}$/.test(String(err.code || ""))
+              ? String(err.code)
+              : null,
+          }),
         );
       });
 
@@ -2203,14 +2202,15 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           );
           fs.writeFileSync(wavFile, pcmToWav(pcm));
 
-          const { text: transcript } = await transcribeWithGroq(
+            const { text: transcript, keyIndex: sttKeyIndex } = await transcribeWithGroq(
             wavFile,
             GROQ_KEYS,
             {
-              startIndex: currentKeyIndex,
+              startIndex: groqState.currentKeyIndex,
               invalidIndices: invalidGroqKeyIndices,
             },
           );
+            groqState.currentKeyIndex = sttKeyIndex;
           try {
             fs.unlinkSync(wavFile);
             wavFile = null;
@@ -2447,7 +2447,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
             console.error("[DB] STT bot reply save error:", dbErr.message);
           }
 
-          console.log(`[STT] AI reply: "${aiReply.substring(0, 60)}"`);
+          console.log(`[STT] AI reply generated (${aiReply.length} characters).`);
           await speakMessage(guildId, aiReply, String(targetUserId));
 
           // Wait for TTS to finish before next listen cycle
@@ -2964,7 +2964,15 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     runtimeState.discord.readyAt = new Date().toISOString();
     runtimeState.discord.lastLoginError = null;
     await probeGroqKeysAtStartup().catch((err) => {
-      console.warn("[GROQ] Startup key probe failed:", err.message);
+      const meta = getGroqErrorMeta(err);
+      console.warn(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        severity: "WARNING",
+        event: "provider_startup_probe_failed",
+        provider: "groq",
+        errorCategory: meta.category,
+        statusCode: meta.status,
+      }));
     });
     await setBotCustomStatus("Miss ko na siya");
     startScheduledGreetings();
@@ -3627,11 +3635,9 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           max_tokens: fastMode ? 160 : 260,
         });
 
-        if (
-          response.status === 200 &&
-          response.data.choices[0].message.content
-        ) {
-          let reply = response.data.choices[0].message.content.trim();
+        const providerContent = extractGroqContent(response.data);
+        if (response.status === 200 && providerContent) {
+          let reply = providerContent;
 
           // FINAL GUARD: Strip raw IDs (17-20 digits) that are NOT in a <@...> mention
           // This stops JanJan from outputting "ID:317867947265884180" etc.
@@ -3653,14 +3659,17 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
 
           const deLooped = cleanResponse(cleaned.trim(), styleScopeKey);
           const finalResult = deLooped || cleaned.trim();
-          console.log(
-            `[CLEANER] Raw: ${reply.substring(0, 50)}... | Final: ${finalResult.substring(0, 50)}...`,
-          );
-
           // If after cleaning we have nothing, this model only gave us thoughts. TRY NEXT MODEL.
           if (!finalResult || finalResult.length < 2) {
             console.warn(
-              `[GROQ] Model ${currentModel} purely internal. Skipping...`,
+              JSON.stringify({
+                timestamp: new Date().toISOString(),
+                severity: "WARNING",
+                event: "provider_response_rejected",
+                provider: "groq",
+                model: currentModel,
+                errorCategory: "empty_after_sanitization",
+              }),
             );
             continue;
           }
@@ -3669,29 +3678,49 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           await storeStyleProfile(authorId, effectiveStyle, userMessage);
           return finalResult;
         }
+        if (response.status === 200) {
+          console.warn(JSON.stringify({
+            timestamp: new Date().toISOString(),
+            severity: "WARNING",
+            event: "provider_response_rejected",
+            provider: "groq",
+            model: currentModel,
+            statusCode: response.status,
+            errorCategory: "missing_or_invalid_content",
+          }));
+        }
       } catch (err) {
-        const { status, code, message } = groqErrorMeta(err);
+        const { status, code, category } = getGroqErrorMeta(err);
         const isRateLimit = status === 429 || code === "rate_limit_exceeded";
         const isInvalidKey =
           status === 401 ||
           code === "invalid_api_key" ||
-          /invalid api key/i.test(message);
+          category === "invalid_credentials";
 
         if (isRateLimit) {
           console.warn(
-            `[GROQ] Model ${currentModel} rate limited. Trying next...`,
-          );
-          continue;
-        }
-
-        if (isInvalidKey) {
-          console.error(
-            `[GROQ] Model ${currentModel}: invalid API key (401) — ${message}. Keys left: ${GROQ_KEYS.length - invalidGroqKeyIndices.size}/${GROQ_KEYS.length}`,
+            `[GROQ] Model ${currentModel} rate limited; all configured keys are cooling down.`,
           );
           break;
         }
 
-        console.error(`[GROQ] Error with model ${currentModel}:`, err.message);
+        if (isInvalidKey) {
+          console.error(
+            `[GROQ] Model ${currentModel}: invalid credentials (401). Keys left: ${GROQ_KEYS.length - invalidGroqKeyIndices.size}/${GROQ_KEYS.length}`,
+          );
+          break;
+        }
+
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          severity: status >= 500 ? "ERROR" : "WARNING",
+          event: "provider_model_failed",
+          provider: "groq",
+          model: currentModel,
+          statusCode: status,
+          errorCategory: category,
+        }));
+        if (category === "timeout" || category === "network_error") break;
         continue;
       }
     }
@@ -4167,12 +4196,14 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
               useTtsJoin: true,
             });
           } catch (voiceErr) {
+            const voiceErrorCode = /^[A-Z0-9_-]{1,40}$/.test(String(voiceErr.code || ""))
+              ? String(voiceErr.code)
+              : "VOICE_NOT_READY";
             console.error(
               "[TTS] j!vc voice not ready:",
-              voiceErr.code || voiceErr.message,
+              voiceErrorCode,
             );
-            runtimeState.voice.lastConnectError =
-              voiceErr.code || voiceErr.message;
+            runtimeState.voice.lastConnectError = voiceErrorCode;
             await message.reply(formatVoiceConnectError(voiceErr));
             return;
           }

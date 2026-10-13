@@ -1,11 +1,15 @@
 const http = require('node:http');
+const { randomUUID } = require('node:crypto');
+const { createListenAuth } = require('./listenAuth');
 
 function sendJson(res, statusCode, payload) {
+  res.setHeader('Cache-Control', 'no-store');
   res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload, null, 2));
 }
 
 function sendHtml(res, statusCode, html) {
+  res.setHeader('Cache-Control', 'no-store');
   res.writeHead(statusCode, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(html);
 }
@@ -13,6 +17,64 @@ function sendHtml(res, statusCode, html) {
 function sendText(res, statusCode, body) {
   res.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end(body);
+}
+
+function readJsonBody(req, maxBytes = 4096) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    let failed = false;
+
+    req.on('data', (chunk) => {
+      if (failed) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        failed = true;
+        const error = new Error('Request body too large.');
+        error.statusCode = 413;
+        reject(error);
+        return;
+      }
+      body += chunk.toString('utf8');
+    });
+
+    req.on('end', () => {
+      if (failed) return;
+      if (!body) {
+        const error = new Error('A JSON body is required.');
+        error.statusCode = 400;
+        reject(error);
+        return;
+      }
+      try {
+        const value = JSON.parse(body);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          throw new Error('Expected a JSON object.');
+        }
+        resolve(value);
+      } catch {
+        const error = new Error('Invalid JSON body.');
+        error.statusCode = 400;
+        reject(error);
+      }
+    });
+
+    req.on('error', (error) => {
+      if (!failed) reject(error);
+    });
+  });
+}
+
+function writeStructuredLog(severity, event, details = {}) {
+  const record = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    severity,
+    event,
+    ...details,
+  });
+  if (severity === 'ERROR') console.error(record);
+  else if (severity === 'WARNING') console.warn(record);
+  else console.log(record);
 }
 
 function buildHealthPayload({ runtimeState, client, getDiagnostics }) {
@@ -44,8 +106,7 @@ function buildHealthPayload({ runtimeState, client, getDiagnostics }) {
   };
 }
 
-function buildListenPageHtml() {
-  const passkey = '12345';
+function buildListenPageHtml(authenticated = false) {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -143,6 +204,16 @@ function buildListenPageHtml() {
       .kp-clr:hover { background: rgba(245,158,11,0.1); border-color: #f59e0b; }
       .kp-enter   { color: #00ff41; border-color: #00ff41; background: rgba(0,255,65,0.08); }
       .kp-enter:hover { background: rgba(0,255,65,0.22); }
+      .auth-input {
+        width: 100%;
+        margin-top: 12px;
+        padding: 12px;
+        background: #000a00;
+        color: #00ff41;
+        border: 1px solid #1a6b22;
+        font: 16px 'Courier New', Courier, monospace;
+      }
+      .auth-submit { width: 100%; margin-top: 8px; }
 
       /* ── listen UI (hidden until unlocked) ── */
       #app {
@@ -306,28 +377,12 @@ function buildListenPageHtml() {
         <div class="t-line t-dim">  [SYS] authentication required</div>
         <div class="t-line t-dim">  [SYS] awaiting input sequence...</div>
         <div class="t-line">&nbsp;</div>
-        <div class="t-line">  ENTER PASSKEY</div>
-        <div class="slots" id="slots">
-          <div class="slot" id="s0">_</div>
-          <div class="slot" id="s1">_</div>
-          <div class="slot" id="s2">_</div>
-          <div class="slot" id="s3">_</div>
-          <div class="slot" id="s4">_</div>
-        </div>
-        <div class="keypad">
-          <button class="kp" data-k="1">1</button>
-          <button class="kp" data-k="2">2</button>
-          <button class="kp" data-k="3">3</button>
-          <button class="kp" data-k="4">4</button>
-          <button class="kp" data-k="5">5</button>
-          <button class="kp" data-k="6">6</button>
-          <button class="kp" data-k="7">7</button>
-          <button class="kp" data-k="8">8</button>
-          <button class="kp" data-k="9">9</button>
-          <button class="kp kp-clr" data-k="CLR">CLR</button>
-          <button class="kp" data-k="0">0</button>
-          <button class="kp kp-enter" data-k="ENTER">ENT</button>
-        </div>
+        <form id="authForm">
+          <label class="t-line" for="passkey">  ENTER ACCESS KEY</label>
+          <input id="passkey" name="passkey" class="auth-input" type="password"
+            autocomplete="current-password" maxlength="256" required>
+          <button class="kp kp-enter auth-submit" type="submit">AUTHENTICATE</button>
+        </form>
         <div class="t-line t-dim" id="t-status">&nbsp;</div>
       </div>
     </div>
@@ -362,34 +417,25 @@ function buildListenPageHtml() {
 
     <script>
       /* ══════════════════════════════════════════════
-         GATE LOGIC — passkey: 12345
+         Server-validated access gate
       ══════════════════════════════════════════════ */
-      const PASSKEY   = '12345';
-      let input   = '';
       let lockout = false;
 
       const gate    = document.getElementById('gate');
       const tStatus = document.getElementById('t-status');
-      const slots   = [0,1,2,3,4].map(i => document.getElementById('s' + i));
-
-      function updateSlots(str, mode) {
-        slots.forEach((el, i) => {
-          el.className = 'slot';
-          if (mode === 'err')       { el.classList.add('err'); el.textContent = 'X'; }
-          else if (i < str.length)  { el.classList.add('filled'); el.textContent = '●'; }
-          else                      { el.textContent = '_'; }
-        });
-      }
+      const authForm = document.getElementById('authForm');
+      const passkeyInput = document.getElementById('passkey');
 
       function deny(msg) {
-        lockout = true; input = '';
-        updateSlots('12345', 'err');
+        lockout = true;
+        passkeyInput.value = '';
         tStatus.className = 't-line t-warn';
         tStatus.textContent = '  [ERR] ' + msg;
         setTimeout(() => {
-          lockout = false; updateSlots('', 'ok');
+          lockout = false;
           tStatus.className = 't-line t-dim';
           tStatus.textContent = '  [SYS] awaiting input sequence...';
+          passkeyInput.focus();
         }, 900);
       }
 
@@ -405,50 +451,30 @@ function buildListenPageHtml() {
         }, 650);
       }
 
-      function pressDigit(d) {
+      async function handleEnter(event) {
+        event.preventDefault();
         if (lockout) return;
-        if (input.length >= PASSKEY.length) return;
-        input += d;
-        updateSlots(input, 'ok');
+        lockout = true;
         tStatus.className = 't-line t-dim';
-        tStatus.textContent = '  [SYS] digit ' + input.length + '/' + PASSKEY.length + ' entered';
-      }
-
-      function handleEnter() {
-        if (lockout) return;
-        if (input.length < PASSKEY.length) {
-          deny('INCOMPLETE — enter all ' + PASSKEY.length + ' digits');
-          return;
+        tStatus.textContent = '  [SYS] verifying access...';
+        try {
+          const response = await fetch('/listen/auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passkey: passkeyInput.value })
+          });
+          if (!response.ok) {
+            deny(response.status === 429
+              ? 'TOO MANY ATTEMPTS — TRY AGAIN LATER'
+              : 'ACCESS DENIED — CHECK ACCESS KEY');
+            return;
+          }
+          unlock();
+        } catch {
+          deny('AUTH SERVER UNAVAILABLE');
         }
-        if (input === PASSKEY) { unlock(); }
-        else { deny('ACCESS DENIED — wrong passkey'); }
       }
-
-      function handleClear() {
-        if (lockout) return;
-        input = '';
-        updateSlots('', 'ok');
-        tStatus.className = 't-line t-dim';
-        tStatus.textContent = '  [SYS] cleared';
-      }
-
-      /* keypad clicks */
-      document.querySelectorAll('.kp').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const k = btn.dataset.k;
-          if (k === 'ENTER')       { handleEnter(); }
-          else if (k === 'CLR')    { handleClear(); }
-          else if (/^[0-9]$/.test(k)) { pressDigit(k); }
-        });
-      });
-
-      /* physical keyboard */
-      document.addEventListener('keydown', (e) => {
-        if (lockout) return;
-        if (e.key === 'Enter')     { e.preventDefault(); handleEnter(); }
-        else if (e.key === 'Backspace') { e.preventDefault(); handleClear(); }
-        else if (/^[0-9]$/.test(e.key)) { pressDigit(e.key); }
-      });
+      authForm.addEventListener('submit', handleEnter);
 
       /* ══════════════════════════════════════════════
          AUDIO APP (boots only after unlock)
@@ -713,21 +739,113 @@ function buildListenPageHtml() {
         refreshStreamList();
         setInterval(refreshStreamList, 5000);
       }
+
+      if (${authenticated ? 'true' : 'false'}) unlock();
     </script>
   </body>
 </html>`;
 }
 
 function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoiceStream, onJoinChannel }) {
-  const server = http.createServer((req, res) => {
-    const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+  const listenAuth = createListenAuth({
+    passkey: config.listenPasskey,
+    sessionSecret: config.sessionSecret,
+    secureCookies: config.nodeEnv === 'production',
+  });
+  let failedAuthAttempts = 0;
+  let authFailureWindowStarted = Date.now();
+  let authLockoutUntil = 0;
+  const protectedPaths = new Set([
+    '/diagnostics',
+    '/voice-status',
+    '/join-channel',
+  ]);
+  const server = http.createServer(async (req, res) => {
+    const rawRequestId = String(req.headers['x-request-id'] || '');
+    const requestId = /^[A-Za-z0-9._-]{1,64}$/.test(rawRequestId) ? rawRequestId : randomUUID();
+    const startedAt = Date.now();
+    let requestPath = '/';
+    let errorCategory = null;
 
-    if (req.method !== 'GET') {
-      sendJson(res, 405, { error: 'Method not allowed' });
-      return;
-    }
+    res.setHeader('X-Request-ID', requestId);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
 
-    if (requestUrl.pathname === '/') {
+    try {
+      const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      requestPath = requestUrl.pathname;
+
+      if (requestPath === '/listen/auth') {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { error: 'Method not allowed' });
+          return;
+        }
+        if (!listenAuth.enabled) {
+          errorCategory = 'authentication_not_configured';
+          sendJson(res, 503, { error: 'Audio listener authentication is not configured.' });
+          return;
+        }
+        if (authLockoutUntil > Date.now()) {
+          errorCategory = 'authentication_rate_limited';
+          res.setHeader('Retry-After', String(Math.ceil((authLockoutUntil - Date.now()) / 1000)));
+          sendJson(res, 429, { error: 'Too many authentication failures.' });
+          return;
+        }
+
+        let body;
+        try {
+          body = await readJsonBody(req, 4096);
+        } catch (error) {
+          errorCategory = error.statusCode === 413 ? 'request_body_too_large' : 'invalid_json';
+          sendJson(res, error.statusCode || 400, { error: errorCategory });
+          return;
+        }
+
+        const passkey = typeof body.passkey === 'string' ? body.passkey : '';
+        if (passkey.length > 256 || !listenAuth.verifyPasskey(passkey)) {
+          if (Date.now() - authFailureWindowStarted >= 15 * 60 * 1000) {
+            failedAuthAttempts = 0;
+            authFailureWindowStarted = Date.now();
+          }
+          failedAuthAttempts++;
+          if (failedAuthAttempts >= 8) {
+            authLockoutUntil = Date.now() + 15 * 60 * 1000;
+            failedAuthAttempts = 0;
+            authFailureWindowStarted = Date.now();
+          }
+          errorCategory = 'authentication_failed';
+          sendJson(res, 401, { error: 'Authentication failed.' });
+          return;
+        }
+
+        failedAuthAttempts = 0;
+        authFailureWindowStarted = Date.now();
+        authLockoutUntil = 0;
+        res.setHeader('Set-Cookie', listenAuth.issueSessionCookie());
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (protectedPaths.has(requestPath)) {
+        if (!listenAuth.enabled) {
+          errorCategory = 'authentication_not_configured';
+          sendJson(res, 503, { error: 'Audio listener authentication is not configured.' });
+          return;
+        }
+        if (!listenAuth.isAuthorized(req)) {
+          errorCategory = 'authentication_required';
+          sendJson(res, 401, { error: 'Authentication required.' });
+          return;
+        }
+      }
+
+      if (req.method !== 'GET' && !(requestPath === '/join-channel' && req.method === 'POST')) {
+        sendJson(res, 405, { error: 'Method not allowed' });
+        return;
+      }
+
+    if (requestPath === '/') {
       const discordReady = typeof client.isReady === 'function' ? client.isReady() : false;
       const statusLabel = discordReady ? '[ ONLINE ]' : '[ CONNECTING ]';
       sendHtml(res, 200, `<!doctype html>
@@ -827,7 +945,7 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
       </a>
       <a class="cmd" href="/health">
         <span class="cmd-prompt">$</span>
-        <span class="cmd-label">./health <span class="cmd-desc">-- process &amp; diagnostics</span></span>
+        <span class="cmd-label">./health <span class="cmd-desc">-- liveness check</span></span>
         <span class="cmd-arrow">›</span>
       </a>
       <a class="cmd" href="/ping">
@@ -844,21 +962,37 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
       return;
     }
 
-    if (requestUrl.pathname === '/health') {
-      sendJson(res, 200, buildHealthPayload({ runtimeState, client, getDiagnostics }));
+    if (requestPath === '/health') {
+      sendJson(res, 200, {
+        status: 'ok',
+        service: runtimeState.service.name,
+        timestamp: new Date().toISOString(),
+        uptimeSeconds: Math.round(process.uptime()),
+      });
       return;
     }
 
-    if (requestUrl.pathname === '/ready') {
-      const ready = typeof client.isReady === 'function' ? client.isReady() : false;
+    if (requestPath === '/ready') {
+      const checks = {
+        discord: typeof client.isReady === 'function' ? client.isReady() : false,
+        database: Boolean(runtimeState.database.connected),
+        shuttingDown: Boolean(runtimeState.process.shuttingDown),
+      };
+      const ready = checks.discord && checks.database && !checks.shuttingDown;
       sendJson(res, ready ? 200 : 503, {
         ready,
+        checks,
         timestamp: new Date().toISOString()
       });
       return;
     }
 
-    if (requestUrl.pathname === '/ping') {
+    if (requestPath === '/diagnostics') {
+      sendJson(res, 200, buildHealthPayload({ runtimeState, client, getDiagnostics }));
+      return;
+    }
+
+    if (requestPath === '/ping') {
       sendJson(res, 200, {
         message: 'pong',
         timestamp: new Date().toISOString(),
@@ -867,12 +1001,17 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
       return;
     }
 
-    if (requestUrl.pathname === '/listen') {
-      sendHtml(res, 200, buildListenPageHtml());
+    if (requestPath === '/listen') {
+      if (!listenAuth.enabled) {
+        errorCategory = 'authentication_not_configured';
+        sendJson(res, 503, { error: 'Set LISTEN_PASSKEY (16+ characters) and SESSION_SECRET (32+ characters).' });
+        return;
+      }
+      sendHtml(res, 200, buildListenPageHtml(listenAuth.isAuthorized(req)));
       return;
     }
 
-    if (requestUrl.pathname === '/bg.gif') {
+    if (requestPath === '/bg.gif') {
       const fs = require('node:fs');
       const path = require('node:path');
       // Use process.cwd() so the path resolves correctly regardless of where the module is located (works on Render too)
@@ -887,19 +1026,31 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
       return;
     }
 
-    if (requestUrl.pathname === '/voice-status') {
+    if (requestPath === '/voice-status') {
       const guildId = requestUrl.searchParams.get('guildId');
       sendJson(res, 200, liveVoiceStream ? liveVoiceStream.getStatus(guildId) : { active: false, streams: [] });
       return;
     }
 
-    if (requestUrl.pathname === '/join-channel') {
-      const channelId = requestUrl.searchParams.get('channelId');
-      if (!channelId) {
-        sendJson(res, 400, { error: 'Missing channelId param' });
+    if (requestPath === '/join-channel') {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'Method not allowed' });
         return;
       }
-      const channel = client.channels.cache.get(channelId);
+      let body;
+      try {
+        body = await readJsonBody(req, 1024);
+      } catch (error) {
+        errorCategory = error.statusCode === 413 ? 'request_body_too_large' : 'invalid_json';
+        sendJson(res, error.statusCode || 400, { error: errorCategory });
+        return;
+      }
+      const channelId = typeof body.channelId === 'string' ? body.channelId.trim() : '';
+      if (!channelId) {
+        sendJson(res, 400, { error: 'Missing channelId.' });
+        return;
+      }
+      const channel = client.channels?.cache?.get(channelId);
       if (!channel) {
         sendJson(res, 404, { error: 'Channel not found in cache', channelId });
         return;
@@ -909,25 +1060,50 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
         return;
       }
       if (typeof onJoinChannel !== 'function') {
-        sendJson(res, 500, { error: 'onJoinChannel callback not configured' });
+        sendJson(res, 500, { error: 'Channel join is unavailable.' });
         return;
       }
       try {
-        onJoinChannel(channel.id, channel.guild.id, channel.guild.voiceAdapterCreator, channel.name, channel.guild.name);
+        await onJoinChannel(channel.id, channel.guild.id, channel.guild.voiceAdapterCreator, channel.name, channel.guild.name);
         sendJson(res, 200, { ok: true, channelId: channel.id, channelName: channel.name, guildId: channel.guild.id, guildName: channel.guild.name });
       } catch (err) {
-        sendJson(res, 500, { error: err.message });
+        errorCategory = 'channel_join_failed';
+        sendJson(res, 500, { error: 'Channel join failed.' });
       }
       return;
     }
 
     sendText(res, 404, 'Not found');
+    } catch (error) {
+      const statusCode = Number.isInteger(error.statusCode) ? error.statusCode : 500;
+      errorCategory = statusCode >= 500 ? 'internal_error' : 'invalid_request';
+      if (statusCode >= 500) {
+        sendJson(res, 500, { error: 'Internal server error.' });
+      } else {
+        sendJson(res, statusCode, { error: errorCategory });
+      }
+    } finally {
+      const statusCode = res.statusCode || 500;
+      const severity = statusCode >= 500 ? 'ERROR' : statusCode >= 400 ? 'WARNING' : 'INFO';
+      writeStructuredLog(severity, 'http_request_completed', {
+        requestId,
+        method: req.method,
+        route: requestPath,
+        statusCode,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        errorCategory,
+      });
+    }
   });
 
   if (liveVoiceStream) {
     server.on('upgrade', (req, socket, head) => {
-      const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
-      if (requestUrl.pathname === '/voice-stream') {
+      const requestUrl = new URL(req.url || '/', 'http://127.0.0.1');
+      if (
+        requestUrl.pathname === '/voice-stream' &&
+        listenAuth.enabled &&
+        listenAuth.isAuthorized(req)
+      ) {
         liveVoiceStream.handleUpgrade(req, socket, head);
       } else {
         socket.destroy();
@@ -937,9 +1113,17 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
 
   return {
     start() {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
+        const onError = (error) => reject(error);
+        server.once('error', onError);
         server.listen(config.port, '0.0.0.0', () => {
-          console.log(`[WEB] Listening on 0.0.0.0:${config.port}`);
+          server.off('error', onError);
+          const address = server.address();
+          writeStructuredLog('INFO', 'http_server_listening', {
+            host: '0.0.0.0',
+            port: typeof address === 'object' && address ? address.port : config.port,
+            environment: config.nodeEnv,
+          });
           resolve(server);
         });
       });
@@ -960,5 +1144,7 @@ function createWebServer({ config, runtimeState, client, getDiagnostics, liveVoi
 }
 
 module.exports = {
-  createWebServer
+  createWebServer,
+  buildHealthPayload,
+  buildListenPageHtml,
 };
