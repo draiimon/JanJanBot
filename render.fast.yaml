@@ -11,7 +11,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm ci --omit=dev --no-fund --no-audit
+    buildCommand: npm install --omit=dev --no-fund --no-audit
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
