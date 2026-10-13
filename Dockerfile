@@ -21,9 +21,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# Cache npm tarball store — native modules (sodium, canvas, sharp) skip recompile on unchanged lockfile
+# Use a current npm 11 release instead of the bundled npm 10.9.9 that crashes
+# with "Exit handler never called" in the Render Docker build.
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npm ci --omit=dev --no-fund --no-audit \
+    npm install --global npm@11.21.0 \
+    && npm ci --omit=dev --no-fund --no-audit \
     && rm -rf /app/node_modules/ffmpeg-static
 
 FROM base AS runtime
