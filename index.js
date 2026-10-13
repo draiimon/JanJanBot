@@ -515,9 +515,9 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     }
 
     const probePayload = {
-      model: "llama-3.1-8b-instant",
+      model: "qwen/qwen3.8-27b",
       messages: [{ role: "user", content: "ok" }],
-      max_tokens: 1,
+      max_completion_tokens: 1,
     };
 
     let working = 0;
@@ -990,7 +990,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
     // Lightweight fact extraction (keeps DB populated so "kilala mo ba" works)
     try {
       const res = await performChatRequest({
-        model: "llama-3.1-8b-instant",
+        model: "openai/gpt-oss-20b",
         messages: [
           {
             role: "system",
@@ -1006,7 +1006,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           },
         ],
         temperature: 0.2,
-        max_tokens: 80,
+        max_completion_tokens: 80,
       });
 
       const text = res.data?.choices?.[0]?.message?.content || "";
@@ -1331,7 +1331,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
 
       const response = await performChatRequest(
         {
-          model: "llama-3.1-8b-instant",
+          model: "openai/gpt-oss-20b",
           messages: [
             {
               role: "system",
@@ -1348,7 +1348,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
             },
           ],
           temperature: 0.8,
-          max_tokens: 60,
+          max_completion_tokens: 60,
         },
         { maxWaitMs: 60_000 },
       );
@@ -3153,7 +3153,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
 
     try {
       const response = await performChatRequest({
-        model: "llama-3.1-8b-instant",
+        model: "openai/gpt-oss-20b",
         messages: [
           {
             role: "system",
@@ -3164,7 +3164,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           { role: "user", content: prompt },
         ],
         temperature: 0.95,
-        max_tokens: 150,
+        max_completion_tokens: 150,
       });
 
       const raw = response.data?.choices?.[0]?.message?.content?.trim() || "";
@@ -3490,13 +3490,12 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       } catch (err) {}
     }
 
-    // JanJan's Tiered Intelligence Matrix (Priority Model Fallback - UPDATED 2025)
+    // Chat models verified against the configured Groq account's current model catalog.
     const models = [
-      "llama-3.3-70b-versatile", // === [PINAKA MAIN / FLAGSHIP MODEL] ===
-      "qwen-2.5-coder-32b", // Smart Coding & Logic
-      "groq/compound", // Stable Powerhouse
-      "groq/compound-mini", // Efficient Alternative
-      "llama-3.1-8b-instant", // Last Resort (Safety Net)
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "allam-2-7b",
     ];
 
     // ============================================================
@@ -3507,7 +3506,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
       if (retryCount >= 2) return;
       if (fastMode) return;
       const model =
-        retryCount === 0 ? "llama-3.1-8b-instant" : "groq/compound-mini";
+        retryCount === 0 ? "openai/gpt-oss-20b" : "qwen/qwen3.8-27b";
       try {
         const thinkingPayload = {
           model: model,
@@ -3522,7 +3521,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
             },
           ],
           temperature: 0.3,
-          max_tokens: 200,
+          max_completion_tokens: 200,
         };
 
         const thinkingRes = await performChatRequest(thinkingPayload);
@@ -3632,7 +3631,10 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           model: currentModel,
           messages: finalMessages,
           temperature: 0.7,
-          max_tokens: fastMode ? 160 : 260,
+          max_completion_tokens: fastMode ? 256 : 4096,
+          ...(currentModel === "qwen/qwen3.8-27b"
+            ? { reasoning_effort: "medium", reasoning_format: "hidden" }
+            : {}),
         });
 
         const providerContent = extractGroqContent(response.data);
@@ -3767,7 +3769,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
         `USER_FACTS: (ID: facts... ID: facts...)`;
 
       const response = await performChatRequest({
-        model: "llama-3.1-8b-instant",
+        model: "openai/gpt-oss-20b",
         messages: [
           {
             role: "system",
@@ -5025,7 +5027,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
           await message.channel.sendTyping();
           try {
             const promptDraftRes = await performChatRequest({
-              model: "llama-3.1-8b-instant",
+              model: "openai/gpt-oss-20b",
               messages: [
                 {
                   role: "system",
@@ -5051,7 +5053,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                 },
               ],
               temperature: 0.6,
-              max_tokens: 220,
+              max_completion_tokens: 220,
             });
 
             const raw = (
@@ -5610,7 +5612,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
             );
             try {
               const promptDraftRes = await performChatRequest({
-                model: "llama-3.1-8b-instant",
+                model: "openai/gpt-oss-20b",
                 messages: [
                   {
                     role: "system",
@@ -5628,7 +5630,7 @@ CONVERSATIONAL STYLE (bad boy energy stays, but talk like a real person, not a s
                   },
                 ],
                 temperature: 0.6,
-                max_tokens: 120,
+                max_completion_tokens: 120,
               });
               const drafted = (
                 promptDraftRes.data?.choices?.[0]?.message?.content || ""

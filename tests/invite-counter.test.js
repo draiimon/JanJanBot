@@ -1,12 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { PermissionFlagsBits } = require('discord.js');
 const {
   INVITE_LOG_CHANNEL_ID,
   postViaWebhook,
 } = require('../src/members/inviteCounter');
 
-function makeDiscordMocks({ sendFails = false } = {}) {
+function makeDiscordMocks({ sendFails = false, manageWebhooks = true } = {}) {
   let sentPayload;
+  let channelSendCount = 0;
   const hook = {
     name: 'PLAYGROUND Invites',
     owner: { id: 'bot-user' },
@@ -17,8 +19,13 @@ function makeDiscordMocks({ sendFails = false } = {}) {
   };
   const channel = {
     isTextBased: () => true,
-    permissionsFor: () => ({ has: () => true }),
+    permissionsFor: () => ({
+      has: (permission) => manageWebhooks || permission !== PermissionFlagsBits.ManageWebhooks,
+    }),
     fetchWebhooks: async () => [hook],
+    async send() {
+      channelSendCount++;
+    },
   };
   const guild = {
     id: 'guild-id',
@@ -44,6 +51,7 @@ function makeDiscordMocks({ sendFails = false } = {}) {
     hook,
     embed,
     getSentPayload: () => sentPayload,
+    getChannelSendCount: () => channelSendCount,
   };
 }
 
@@ -75,4 +83,18 @@ test('invite webhook reports a failed send instead of claiming success', async (
   );
 
   assert.equal(sent, false);
+});
+
+test('invite logs never fall back to the JanJan bot identity without webhook permission', async () => {
+  const mocks = makeDiscordMocks({ manageWebhooks: false });
+
+  const sent = await postViaWebhook(
+    mocks.guild,
+    { id: 'bot-user' },
+    mocks.embed,
+    null,
+  );
+
+  assert.equal(sent, false);
+  assert.equal(mocks.getChannelSendCount(), 0);
 });

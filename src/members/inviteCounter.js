@@ -76,7 +76,7 @@ async function getLogWebhook(guild, clientUser) {
     return { channel: null, hook: null };
   }
   if (!perms.has(PermissionFlagsBits.ManageWebhooks)) {
-    console.warn(`[INVITES] Bot lacks ManageWebhooks — falling back to channel.send`);
+    console.warn(`[INVITES] Bot lacks ManageWebhooks — invite webhook posting is disabled`);
     return { channel, hook: null };
   }
 
@@ -168,13 +168,8 @@ async function postViaWebhook(guild, clientUser, embed, banner) {
       return false;
     }
   }
-  try {
-    await channel.send(payload);
-    return true;
-  } catch (err) {
-    console.warn('[INVITES] Channel send failed:', err.message);
-    return false;
-  }
+  console.warn('[INVITES] No usable webhook; refusing to post invite log as the bot user.');
+  return false;
 }
 
 function buildInviteCreatedEmbed(invite) {

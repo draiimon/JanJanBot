@@ -21,9 +21,9 @@ function parseEnvFile(path) {
 function testKey(key) {
   return new Promise((resolve) => {
     const body = JSON.stringify({
-      model: 'llama-3.1-8b-instant',
+      model: 'qwen/qwen3.8-27b',
       messages: [{ role: 'user', content: 'ok' }],
-      max_tokens: 3,
+      max_completion_tokens: 1,
     });
     const req = https.request(
       {
@@ -66,6 +66,8 @@ const env = {};
 for (const p of ['.env', 'JanJanBot.render.env']) {
   if (fs.existsSync(p)) Object.assign(env, parseEnvFile(p));
 }
+// Prefer current runtime/Replit secrets over values from local files.
+Object.assign(env, process.env);
 
 const slots = [
   'GROQ_API_KEY1',
@@ -78,7 +80,7 @@ const slots = [
 ];
 
 for (const name of slots) {
-  const key = env[name];
+  const key = String(env[name] || '').trim().replace(/^["']|["']$/g, '');
   if (!key) {
     console.log(`${name}: NOT SET`);
     continue;
